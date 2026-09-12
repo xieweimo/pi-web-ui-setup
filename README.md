@@ -44,3 +44,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-aiwork.ps1
 ```
 
 （离线安装需要系统已装 Node.js 22+。）
+
+## 清理旧的失败安装
+
+如果之前装失败过，先清一次再装（会删除 `%USERPROFILE%\PiWebUI`、临时文件、桌面快捷方式，并修掉旧版写坏的 BOM）：
+
+```powershell
+$u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/uninstall.ps1?t='+(Get-Random);try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy;$s=irm $u};iex $s
+```
+
+清理是可选的：安装器本身可以重复执行，会复用已下载的便携 Node 并重新应用补丁。
