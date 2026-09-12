@@ -167,18 +167,10 @@ foreach ($n in @('pi', 'pi-web-ui')) {
   if (Test-Path $p) { Write-Host "  shim ok: $p" } else { Write-Host "  missing shim: $n" -ForegroundColor DarkYellow }
 }
 
-# --- 3. Download the customization bundle and apply it ---
-if (-not (Get-RemoteFile -Bases $scriptBases -Leaf $zipName -Out $zip)) {
-  throw 'Could not download the setup package from any mirror.'
-}
-foreach ($sub in @('configs', 'patches', 'projects', 'scripts')) {
-  Remove-Item (Join-Path $root $sub) -Recurse -Force -ErrorAction SilentlyContinue
-}
-New-Item -ItemType Directory -Force -Path $root | Out-Null
-Expand-Archive -Force $zip $root
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install-aiwork.ps1') -SkipNpmInstall
-
-# --- 4. Record node/shim paths for the launcher (portable Node is not on PATH) ---
+# --- 3. Record node/shim paths FIRST ---
+# install.json must exist before the patches run: they resolve the portable pi-web-ui
+# through it. If it were written afterwards they would fall back to the npm global
+# directory and silently patch the wrong copy (or fail on a machine without one).
 # The launcher starts the shim via cmd.exe, so a .cmd shim is required: Get-Command may
 # resolve the .ps1 variant, which cmd.exe cannot run.
 $shim = Join-Path $nodeDir 'pi-web-ui.cmd'
@@ -188,8 +180,28 @@ if (-not (Test-Path $shim)) {
   if ($found) { $candidates += $found.Source }
   foreach ($c in $candidates) { if (Test-Path $c) { $shim = $c; break } }
 }
+New-Item -ItemType Directory -Force -Path $root | Out-Null
 $cfg = @{ nodeDir = $nodeDir; shim = $shim } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $root 'install.json'), $cfg, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "install.json written (nodeDir=$nodeDir)"
+
+# --- 4. Download the customization bundle and apply it ---
+# Prefer a local package sitting next to this script (offline / testing); $PSScriptRoot is
+# empty when the script is piped into iex, so the check is guarded.
+$localZip = $null
+if ($PSScriptRoot) { $localZip = Join-Path $PSScriptRoot $zipName }
+if ($localZip -and (Test-Path $localZip)) {
+  Write-Host "Using local setup package: $localZip"
+  Copy-Item $localZip $zip -Force
+} elseif (-not (Get-RemoteFile -Bases $scriptBases -Leaf $zipName -Out $zip)) {
+  throw 'Could not download the setup package from any mirror.'
+}
+foreach ($sub in @('configs', 'patches', 'projects', 'scripts')) {
+  Remove-Item (Join-Path $root $sub) -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+Expand-Archive -Force $zip $root
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install-aiwork.ps1') -SkipNpmInstall
 
 Write-Host ''
 Write-Host 'Done. Use the "Pi Web UI" shortcut on your Desktop.' -ForegroundColor Green
