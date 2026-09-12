@@ -98,13 +98,28 @@ if (Test-Path (Join-Path $nodeDir 'node.exe')) { $env:PATH = "$nodeDir;$env:PATH
 Write-Host "node $(node -v)"
 
 # --- 2. 安装 pi 与 pi-web-ui ---
+# 镜像（如 npmmirror）常常滞后于官方源，缺版本时会报 ETARGET；直接尝试会先浪费
+# 几十秒并刷出一堆红字。所以先用 npm view 探测哪个源真的有这个版本，再装。
 Use-DirectLink
 $npmExe = if (Test-Path (Join-Path $nodeDir 'npm.cmd')) { Join-Path $nodeDir 'npm.cmd' } else { 'npm' }
-$installed = $false
+$specs = @('@earendil-works/pi-coding-agent@0.85.1', 'pi-web-ui@0.81.0')
+$usable = @()
 foreach ($reg in $registries) {
+  $allOk = $true
+  foreach ($spec in $specs) {
+    & $npmExe view $spec version --registry $reg 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { $allOk = $false; break }
+  }
+  if ($allOk) { Write-Host "Registry has the pinned versions: $reg"; $usable += $reg }
+  else { Write-Host "Registry is missing a pinned version, skipping: $reg" -ForegroundColor DarkYellow }
+}
+if ($usable.Count -eq 0) { $usable = $registries }
+
+$installed = $false
+foreach ($reg in $usable) {
   try {
     Write-Host "Installing pi + pi-web-ui (registry: $reg)..."
-    & $npmExe install -g --registry $reg '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.81.0'
+    & $npmExe install -g --registry $reg --fetch-retries 3 --fetch-timeout 120000 '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.81.0'
     if ($LASTEXITCODE -eq 0) { $installed = $true; break }
     Write-Host "  npm exited with $LASTEXITCODE" -ForegroundColor DarkYellow
   } catch {
@@ -112,6 +127,10 @@ foreach ($reg in $registries) {
   }
 }
 if (-not $installed) { throw 'npm install failed for every registry.' }
+foreach ($n in @('pi', 'pi-web-ui')) {
+  $p = Join-Path $nodeDir "$n.cmd"
+  if (Test-Path $p) { Write-Host "  shim ok: $p" } else { Write-Host "  missing shim: $n" -ForegroundColor DarkYellow }
+}
 
 # --- 3. 下载定制安装包并应用 ---
 if (-not (Get-RemoteFile -Bases $scriptBases -Leaf $zipName -Out $zip)) {
