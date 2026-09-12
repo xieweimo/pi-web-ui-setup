@@ -4,6 +4,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # NOTE: keep this file ASCII-only. Windows PowerShell 5.1 decodes .ps1 files without a
 # BOM as ANSI/GBK, so non-ASCII comments break parsing. Explanations live in README.md.
 
+$setupVersion = 'v2026-09-13.1'
 $pkgVersion  = 'pi-0.85.1_web-0.81.0'
 $zipName     = "PiWebUI-Setup_$pkgVersion.zip"
 $nodeVersion = if ($env:PI_SETUP_NODE_VERSION) { $env:PI_SETUP_NODE_VERSION } else { 'v22.23.2' }
@@ -90,7 +91,7 @@ function Test-RegistryHasPackage {
   } catch { return $false }
 }
 
-Write-Host '=== pi-web-ui-setup: custom pi-web-ui (Codex quota + RMB cost + recovery button) ===' -ForegroundColor Cyan
+Write-Host "=== pi-web-ui-setup $setupVersion : custom pi-web-ui (Codex quota + RMB cost + recovery button) ===" -ForegroundColor Cyan
 
 # --- 1. Node.js: use system 22+, otherwise install a portable copy (no admin rights) ---
 $nodeOk = $false
