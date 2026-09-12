@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 decodes .ps1 files without a
+# BOM as ANSI/GBK, so non-ASCII comments break parsing. Explanations live in README.md.
+
 $pkgVersion  = 'pi-0.85.1_web-0.81.0'
 $zipName     = "PiWebUI-Setup_$pkgVersion.zip"
 $nodeVersion = if ($env:PI_SETUP_NODE_VERSION) { $env:PI_SETUP_NODE_VERSION } else { 'v22.23.2' }
@@ -19,11 +22,18 @@ $nodeBases = @(
   "https://registry.npmmirror.com/-/binary/node/$nodeVersion",
   "https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/$nodeVersion"
 )
-$registries = @('https://registry.npmmirror.com', 'https://registry.npmjs.org')
+$mirror   = 'https://registry.npmmirror.com'
+$official = 'https://registry.npmjs.org'
+$packages = @(
+  @{ name = '@earendil-works/pi-coding-agent'; ver = '0.85.1'; leaf = 'pi-coding-agent-0.85.1.tgz' },
+  @{ name = 'pi-web-ui';                       ver = '0.81.0'; leaf = 'pi-web-ui-0.81.0.tgz' }
+)
+$allowScripts = 'node-pty,esbuild,protobufjs,@google/genai'
 
-# Windows 的系统代理常指向本机代理软件；代理没开时，PowerShell 的 Invoke-WebRequest
-# 会直接报「无法连接到远程服务器」，而直连其实是通的。所以先记住它，按
-# 直连 → 系统代理 → curl.exe 的顺序尝试，哪种能下就用哪种。
+# The Windows system proxy often points at a local proxy app. When that app is not
+# running, Invoke-WebRequest fails ("cannot connect to the remote server") even though
+# a direct connection works. Remember it, try direct first, then the system proxy,
+# and fall back to curl.exe.
 $savedProxy = $null
 try { $savedProxy = [System.Net.WebRequest]::DefaultWebProxy } catch { }
 function Use-DirectLink { try { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy } catch { } }
@@ -57,9 +67,32 @@ function Get-RemoteFile {
   return $false
 }
 
+# A native command writing to stderr aborts the whole script while
+# $ErrorActionPreference = 'Stop' (that is how npm ETARGET/404 killed the install),
+# so relax it around npm calls and read $LASTEXITCODE instead.
+function Invoke-Npm {
+  param([string[]]$Arguments)
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $npmExe @Arguments 2>&1 | ForEach-Object { Write-Host ("  " + $_) }
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+}
+
+function Test-RegistryHasPackage {
+  param([string]$Reg, [string]$Pkg, [string]$Ver)
+  try {
+    Use-DirectLink
+    return ((Invoke-WebRequest "$Reg/$Pkg/$Ver" -UseBasicParsing -TimeoutSec 25).StatusCode -eq 200)
+  } catch { return $false }
+}
+
 Write-Host '=== pi-web-ui-setup: custom pi-web-ui (Codex quota + RMB cost + recovery button) ===' -ForegroundColor Cyan
 
-# --- 1. Node.js：优先用系统 22+，否则装便携版（免管理员） ---
+# --- 1. Node.js: use system 22+, otherwise install a portable copy (no admin rights) ---
 $nodeOk = $false
 if (Get-Command node -ErrorAction SilentlyContinue) {
   try {
@@ -78,8 +111,7 @@ if (-not $nodeOk) {
     throw 'Could not download Node.js from any mirror.'
   }
   Write-Host 'Extracting portable Node.js...'
-  # $root 可能还不存在；Move-Item 不会自建中间目录，必须先建好，否则报
-  # 「未能找到路径中的某个部分」。
+  # $root may not exist yet and Move-Item does not create intermediate folders.
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   $tmpNode = Join-Path $env:TEMP 'node-portable-extract'
   Remove-Item $tmpNode -Recurse -Force -ErrorAction SilentlyContinue
@@ -89,50 +121,53 @@ if (-not $nodeOk) {
   Remove-Item $nodeDir -Recurse -Force -ErrorAction SilentlyContinue
   Move-Item -Path $inner.FullName -Destination $nodeDir -Force
   Remove-Item $tmpNode -Recurse -Force -ErrorAction SilentlyContinue
-  if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) {
-    throw "Portable Node.js was not installed correctly at $nodeDir"
-  }
+  if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) { throw "Portable Node.js was not installed correctly at $nodeDir" }
   Write-Host "Portable Node.js installed to $nodeDir" -ForegroundColor Green
 }
 if (Test-Path (Join-Path $nodeDir 'node.exe')) { $env:PATH = "$nodeDir;$env:PATH" }
 Write-Host "node $(node -v)"
-
-# --- 2. 安装 pi 与 pi-web-ui ---
-# 镜像（如 npmmirror）常常滞后于官方源，缺版本时会报 ETARGET；直接尝试会先浪费
-# 几十秒并刷出一堆红字。所以先用 npm view 探测哪个源真的有这个版本，再装。
-Use-DirectLink
 $npmExe = if (Test-Path (Join-Path $nodeDir 'npm.cmd')) { Join-Path $nodeDir 'npm.cmd' } else { 'npm' }
-$specs = @('@earendil-works/pi-coding-agent@0.85.1', 'pi-web-ui@0.81.0')
-$usable = @()
-foreach ($reg in $registries) {
-  $allOk = $true
-  foreach ($spec in $specs) {
-    & $npmExe view $spec version --registry $reg 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { $allOk = $false; break }
+
+# --- 2. Dependencies come from the CN mirror; only packages the mirror is missing are
+#        fetched as official tarballs. --replace-registry-host=never stops npm from
+#        rewriting the tarball host to the configured registry CDN. ---
+Write-Host 'Resolving package sources...'
+$mirrorSpecs = @()
+$plainSpecs = @()
+foreach ($p in $packages) {
+  $plainSpecs += "$($p.name)@$($p.ver)"
+  if (Test-RegistryHasPackage -Reg $mirror -Pkg $p.name -Ver $p.ver) {
+    Write-Host "  mirror has $($p.name)@$($p.ver)"
+    $mirrorSpecs += "$($p.name)@$($p.ver)"
+  } else {
+    Write-Host "  mirror missing $($p.name)@$($p.ver) -> official tarball" -ForegroundColor DarkYellow
+    $mirrorSpecs += "$official/$($p.name)/-/$($p.leaf)"
   }
-  if ($allOk) { Write-Host "Registry has the pinned versions: $reg"; $usable += $reg }
-  else { Write-Host "Registry is missing a pinned version, skipping: $reg" -ForegroundColor DarkYellow }
 }
-if ($usable.Count -eq 0) { $usable = $registries }
+
+$npmMajor = 0
+try { $npmMajor = [int](((& $npmExe --version) 2>$null) -replace '\..*', '') } catch { }
+$allowArgs = @()
+if ($npmMajor -ge 11) { $allowArgs = @("--allow-scripts=$allowScripts") }
+Write-Host "npm major = $npmMajor"
 
 $installed = $false
-foreach ($reg in $usable) {
-  try {
-    Write-Host "Installing pi + pi-web-ui (registry: $reg)..."
-    & $npmExe install -g --registry $reg --fetch-retries 3 --fetch-timeout 120000 '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.81.0'
-    if ($LASTEXITCODE -eq 0) { $installed = $true; break }
-    Write-Host "  npm exited with $LASTEXITCODE" -ForegroundColor DarkYellow
-  } catch {
-    Write-Host ('  failed: ' + $_.Exception.Message) -ForegroundColor DarkYellow
-  }
+Write-Host 'Installing pi + pi-web-ui (fast path: mirror + official tarball)...'
+$code = Invoke-Npm -Arguments (@('install', '-g', '--registry', $mirror, '--replace-registry-host=never', '--no-audit', '--no-fund', '--fetch-retries', '3', '--fetch-timeout', '120000') + $allowArgs + $mirrorSpecs)
+if ($code -eq 0) { $installed = $true }
+if (-not $installed) {
+  Write-Host 'Fast path failed; retrying against the official registry...' -ForegroundColor Yellow
+  $code = Invoke-Npm -Arguments (@('install', '-g', '--registry', $official, '--no-audit', '--no-fund', '--fetch-retries', '3', '--fetch-timeout', '120000') + $allowArgs + $plainSpecs)
+  if ($code -eq 0) { $installed = $true }
 }
 if (-not $installed) { throw 'npm install failed for every registry.' }
+
 foreach ($n in @('pi', 'pi-web-ui')) {
   $p = Join-Path $nodeDir "$n.cmd"
   if (Test-Path $p) { Write-Host "  shim ok: $p" } else { Write-Host "  missing shim: $n" -ForegroundColor DarkYellow }
 }
 
-# --- 3. 下载定制安装包并应用 ---
+# --- 3. Download the customization bundle and apply it ---
 if (-not (Get-RemoteFile -Bases $scriptBases -Leaf $zipName -Out $zip)) {
   throw 'Could not download the setup package from any mirror.'
 }
@@ -143,11 +178,15 @@ New-Item -ItemType Directory -Force -Path $root | Out-Null
 Expand-Archive -Force $zip $root
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install-aiwork.ps1') -SkipNpmInstall
 
-# --- 4. 记录 node/shim 路径供启动器使用（便携 Node 不在系统 PATH） ---
+# --- 4. Record node/shim paths for the launcher (portable Node is not on PATH) ---
+# The launcher starts the shim via cmd.exe, so a .cmd shim is required: Get-Command may
+# resolve the .ps1 variant, which cmd.exe cannot run.
 $shim = Join-Path $nodeDir 'pi-web-ui.cmd'
 if (-not (Test-Path $shim)) {
-  $cmd = Get-Command pi-web-ui -ErrorAction SilentlyContinue
-  if ($cmd) { $shim = $cmd.Source } else { $shim = Join-Path $env:APPDATA 'npm\pi-web-ui.cmd' }
+  $candidates = @((Join-Path $env:APPDATA 'npm\pi-web-ui.cmd'))
+  $found = Get-Command pi-web-ui -ErrorAction SilentlyContinue | Where-Object { $_.Source -like '*.cmd' } | Select-Object -First 1
+  if ($found) { $candidates += $found.Source }
+  foreach ($c in $candidates) { if (Test-Path $c) { $shim = $c; break } }
 }
 $cfg = @{ nodeDir = $nodeDir; shim = $shim } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $root 'install.json'), $cfg, (New-Object System.Text.UTF8Encoding($false)))
