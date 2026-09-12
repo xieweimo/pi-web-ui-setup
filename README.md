@@ -54,3 +54,24 @@ $u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/uninstall.ps
 ```
 
 清理是可选的：安装器本身可以重复执行，会复用已下载的便携 Node 并重新应用补丁。
+
+## 命令一览（PowerShell 与 cmd 都有）
+
+| 用途 | PowerShell 一键 | cmd 一键 |
+|---|---|---|
+| 清理旧安装 | 上文「清理旧的失败安装」那条 | 见下，或运行 `uninstall.cmd` |
+| 安装 | 上文「一条命令搞定」那条 | 见下，或运行 `install.cmd` |
+
+**cmd 清理：**
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/uninstall.ps1?t='+(Get-Random); try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy; $s=irm $u}; iex $s"
+```
+
+**cmd 安装：**
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/install.ps1?t='+(Get-Random); try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy; $s=irm $u}; iex $s"
+```
+
+两条 cmd 命令都自带「失败则绕过系统代理重试」，与 PowerShell 版等价。
