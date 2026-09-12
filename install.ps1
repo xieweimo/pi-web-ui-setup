@@ -78,13 +78,20 @@ if (-not $nodeOk) {
     throw 'Could not download Node.js from any mirror.'
   }
   Write-Host 'Extracting portable Node.js...'
+  # $root 可能还不存在；Move-Item 不会自建中间目录，必须先建好，否则报
+  # 「未能找到路径中的某个部分」。
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
   $tmpNode = Join-Path $env:TEMP 'node-portable-extract'
   Remove-Item $tmpNode -Recurse -Force -ErrorAction SilentlyContinue
   Expand-Archive -Force $nodeZip $tmpNode
   $inner = Get-ChildItem $tmpNode -Directory | Select-Object -First 1
+  if (-not $inner) { throw 'Extracted Node.js archive has no directory.' }
   Remove-Item $nodeDir -Recurse -Force -ErrorAction SilentlyContinue
-  Move-Item $inner.FullName $nodeDir
+  Move-Item -Path $inner.FullName -Destination $nodeDir -Force
   Remove-Item $tmpNode -Recurse -Force -ErrorAction SilentlyContinue
+  if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) {
+    throw "Portable Node.js was not installed correctly at $nodeDir"
+  }
   Write-Host "Portable Node.js installed to $nodeDir" -ForegroundColor Green
 }
 if (Test-Path (Join-Path $nodeDir 'node.exe')) { $env:PATH = "$nodeDir;$env:PATH" }
@@ -113,6 +120,7 @@ if (-not (Get-RemoteFile -Bases $scriptBases -Leaf $zipName -Out $zip)) {
 foreach ($sub in @('configs', 'patches', 'projects', 'scripts')) {
   Remove-Item (Join-Path $root $sub) -Recurse -Force -ErrorAction SilentlyContinue
 }
+New-Item -ItemType Directory -Force -Path $root | Out-Null
 Expand-Archive -Force $zip $root
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install-aiwork.ps1') -SkipNpmInstall
 
