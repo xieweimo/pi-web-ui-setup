@@ -37,7 +37,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubus
 
 ## 定制内容在哪（源码 / 补丁 / 插件 / 配置）
 
-`source/` 是定制内容的**明文镜像**，每次同步自动更新：
+`source/` 是定制内容的**明文镜像**，每次同步自动覆盖重建（不用手工维护）：
+
+```
+source/
+├── projects/                       ← 两个界面插件（完整源码）
+│   ├── codex-usage-plugin/         ChatGPT 订阅额度 + 人民币成本
+│   └── piwork-tools-plugin/        顶栏 ⤴同步 + 🛠PIwork
+├── patches/                        ← pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁
+├── configs/                        ← pi 设置模板、全局 AGENTS.md、模型库、版本档案
+├── scripts/                        ← 启动器、断连守护、插件安装器、打包与同步脚本
+├── extras/page-picker-extension.zip
+└── docs/after-install-checklist.md 装完之后要做的事
+```
 
 | 目录 | 内容 |
 |---|---|
