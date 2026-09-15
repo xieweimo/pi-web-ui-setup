@@ -53,6 +53,10 @@ foreach ($m in $mirror) {
 }
 # 日志/备份不入公开仓库
 Get-ChildItem $srcRoot -Recurse -File -Include *.log,*.bak -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+# 本机设置快照（带本机代理端口/绝对路径）不是分发内容，只公开真正的模板与档案
+foreach ($junk in @('settings.json', 'settings.json.bak-before-fix', 'pi-settings-snapshot.json')) {
+    Remove-Item (Join-Path $srcRoot ('configs\' + $junk)) -Force -ErrorAction SilentlyContinue
+}
 Ok ('  已镜像 ' + $mirror.Count + ' 项到 source/')
 
 Info '=== 3/5 提交并推送两个仓库 ==='
