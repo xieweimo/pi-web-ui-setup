@@ -88,4 +88,10 @@ function register() {
 	host().onUiAction("open", open); registered = true;
 }
 register(); setTimeout(register, 0);
-export default { mount(container) { container.innerHTML = '<p style="padding:16px">正在打开独立临时问答面板…</p>'; setTimeout(open, 0); return () => {}; } };
+export default {
+	mount(container) {
+		container.innerHTML = '<div style="padding:20px;font:13px/1.6 system-ui"><h2 style="margin:0 0 8px">💬 临时问问</h2><p style="opacity:.7">独立提问，不读取或写入当前任务会话，也不能修改文件。</p><button type="button" class="qa-open" style="font:inherit;padding:7px 12px;cursor:pointer">打开临时问答</button></div>';
+		container.querySelector(".qa-open")?.addEventListener("click", open);
+		return () => {};
+	},
+};
