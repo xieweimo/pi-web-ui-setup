@@ -25,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubus
 ## 安装器会做什么
 
 1. 检查 Node.js 22+；没有就装便携版到 `%USERPROFILE%\PiWebUI\node`（免管理员），镜像依次尝试 nodejs.org / npmmirror / 清华。
-2. 安装固定版本 `pi 0.85.1` + `pi-web-ui 0.81.0`：依赖走国内镜像，镜像缺的包单独从官方 tarball 拉取。
+2. 安装固定版本 `pi 0.85.1` + `pi-web-ui 0.86.2`：依赖走国内镜像，镜像缺的包单独从官方 tarball 拉取。
 3. 写入 `install.json`（记录便携 Node 与启动命令位置；补丁和启动器靠它定位）。
 4. 解压定制包并应用补丁（按版本 profile 校验，版本不匹配就跳过，不盲改）。
 5. 写入通用 pi 偏好（**无 BOM** 的 UTF-8，避免 pi 报 `Failed to parse settings file`）。
@@ -37,7 +37,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubus
 
 ## 手动 / 离线安装
 
-下载 `PiWebUI-Setup_pi-0.85.1_web-0.81.0.zip`，解压后运行：
+下载 `PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip`，解压后运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-aiwork.ps1

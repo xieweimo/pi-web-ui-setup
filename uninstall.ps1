@@ -22,7 +22,7 @@ if (Test-Path $root) {
 }
 
 # 3. temp artifacts
-foreach ($f in @('node-portable.zip', 'node-portable-extract', 'PiWebUI-Setup.zip', 'PiWebUI-Setup_pi-0.85.1_web-0.81.0.zip')) {
+foreach ($f in @('node-portable.zip', 'node-portable-extract', 'PiWebUI-Setup.zip', 'PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip')) {
   $p = Join-Path $env:TEMP $f
   if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "removed temp $f" }
 }
