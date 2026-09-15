@@ -36,6 +36,7 @@ Info '=== 2/5 镜像定制源码到公开仓库 source/ ==='
 $mirror = @(
     @{ from = 'projects\codex-usage-plugin';      to = 'source\projects\codex-usage-plugin' },
     @{ from = 'projects\piwork-tools-plugin';     to = 'source\projects\piwork-tools-plugin' },
+    @{ from = 'projects\quick-ask-plugin';        to = 'source\projects\quick-ask-plugin' },
     @{ from = 'patches';                          to = 'source\patches' },
     @{ from = 'configs';                          to = 'source\configs' },
     @{ from = 'docs\after-install-checklist.md'; to = 'source\docs\after-install-checklist.md' },

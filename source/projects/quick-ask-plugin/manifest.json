@@ -1,0 +1,23 @@
+{
+	"id": "quick-ask",
+	"name": "临时问问",
+	"icon": "💬",
+	"version": "1.0.0",
+	"description": "任务运行中打开独立临时问答面板；沿用当前模型，但不读取、不写入当前任务会话。",
+	"permissions": ["ui", "http"],
+	"ui": {
+		"topbar": [
+			{
+				"id": "open",
+				"label": "临时问问",
+				"labelEn": "Quick ask",
+				"icon": "💬",
+				"kind": "action",
+				"action": "open",
+				"order": 35,
+				"hint": "打开独立临时问答面板（不影响当前任务）",
+				"hintEn": "Open an independent temporary Q&A panel"
+			}
+		]
+	}
+}
