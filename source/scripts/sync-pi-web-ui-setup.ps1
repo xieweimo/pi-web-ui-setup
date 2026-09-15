@@ -101,11 +101,13 @@ foreach ($f in $files) {
     $localFile = Join-Path $publicDir $f
     $localHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
     $got = $null
-    for ($i = 1; $i -le 4 -and -not $got; $i++) {
+    # 临时文件名不能带路径分隔符（source/... 这种 $f 直接拼进去会让 -OutFile 写到不存在的子目录而报错）
+    $safeName = ($f -replace '[^A-Za-z0-9._-]', '_')
+    for ($i = 1; $i -le 3 -and -not $got; $i++) {
         try {
-            $tmp = Join-Path $env:TEMP ("raw-" + $f + "-" + $i)
+            $tmp = Join-Path $env:TEMP ("raw-" + $safeName + "-" + $i)
             $url = "$rawBase/$f`?t=" + [guid]::NewGuid().ToString('N')
-            Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 60
+            Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 20
             $got = (Get-FileHash $tmp -Algorithm SHA256).Hash
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         } catch {
