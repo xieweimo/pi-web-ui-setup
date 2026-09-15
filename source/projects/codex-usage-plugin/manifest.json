@@ -1,0 +1,72 @@
+{
+	"id": "codex-usage",
+	"name": "额度",
+	"icon": "⚡",
+	"version": "1.0.0",
+	"description": "订阅额度 / 成本显示：ChatGPT(Codex) 订阅显示 5h 与每周窗口用量、重置倒计时、可用 reset 次数；非订阅模型显示人民币成本（实时汇率）",
+	"permissions": ["http"],
+	"settings": [
+		{
+			"key": "mode",
+			"type": "select",
+			"label": "显示模式",
+			"default": "auto",
+			"options": ["auto", "codex", "cost"],
+			"hint": "auto=按当前会话模型自动判断（Codex 订阅走额度，其余走人民币成本）"
+		},
+		{
+			"key": "rateSource",
+			"type": "select",
+			"label": "汇率来源",
+			"default": "live",
+			"options": ["live", "fixed"],
+			"hint": "live=每天抓取 open.er-api.com；fixed=用下面的固定汇率"
+		},
+		{
+			"key": "fixedRate",
+			"type": "number",
+			"label": "固定汇率",
+			"default": 7.2,
+			"min": 1,
+			"max": 20,
+			"hint": "1 美元 = ? 人民币（仅 rateSource=fixed 时使用）"
+		},
+		{
+			"key": "refreshSec",
+			"type": "number",
+			"label": "刷新间隔(秒)",
+			"default": 60,
+			"min": 15,
+			"max": 3600,
+			"hint": "额度/成本的轮询间隔；每轮对话结束也会自动刷新"
+		},
+		{
+			"key": "statusBar",
+			"type": "boolean",
+			"label": "在底部状态栏显示摘要",
+			"default": true,
+			"hint": "把一行摘要插进 pi-web-ui 底部状态栏（刷新页面后生效）"
+		},
+		{
+			"key": "hideNativeCost",
+			"type": "boolean",
+			"label": "隐藏原生的 $ 成本项",
+			"default": true,
+			"hint": "避免与人民币/额度摘要重复；悬停本插件摘要仍可看到美元原值"
+		},
+		{
+			"key": "proxy",
+			"type": "text",
+			"label": "代理地址",
+			"default": "",
+			"hint": "留空 = 依次读 HTTPS_PROXY 环境变量与 ~/.pi/agent/settings.json 的 httpProxy"
+		},
+		{
+			"key": "inheritProxy",
+			"type": "boolean",
+			"label": "为服务进程注入代理",
+			"default": true,
+			"hint": "pi-web-ui 服务不会读 pi 的 httpProxy 设置，而 Codex 请求只认进程环境变量（https_proxy）——不开就会报 fetch failed"
+		}
+	]
+}

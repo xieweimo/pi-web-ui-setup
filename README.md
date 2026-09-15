@@ -4,6 +4,8 @@
 
 **不需要管理员权限**，不需要登录 GitHub：没有 Node.js 时会自动下载便携版 Node（解压即用）。
 
+> 定制的**源码**（插件 / 补丁 / 配置 / 脚本）全部镜像在本仓库 [`source/`](./source) 内，可直接在 GitHub 上浏览，见下文「定制内容在哪」。
+
 ## 一条命令搞定
 
 **PowerShell**（自愈式：第一次失败会自动绕过失效的系统代理重试）：
@@ -29,7 +31,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubus
 3. 写入 `install.json`（记录便携 Node 与启动命令位置；补丁和启动器靠它定位）。
 4. 解压定制包并应用补丁（按版本 profile 校验，版本不匹配就跳过，不盲改）。
 5. 写入通用 pi 偏好（**无 BOM** 的 UTF-8，避免 pi 报 `Failed to parse settings file`）。
-6. 桌面创建 `Pi Web UI` 快捷方式。
+6. 准备**浏览器扩展** page-picker：解压到安装目录 `page-picker-extension\`，并预先打好「全站放行」补丁。
+7. 在**桌面**放一份《装完之后要做的事.txt》（登录 / 装扩展 / shellPath 三步 + 自检清单）。
+8. 桌面创建 `Pi Web UI` 快捷方式。
+
+## 定制内容在哪（源码 / 补丁 / 插件 / 配置）
+
+`source/` 是定制内容的**明文镜像**，每次同步自动更新：
+
+| 目录 | 内容 |
+|---|---|
+| `source/projects/codex-usage-plugin/` | 界面插件：ChatGPT 订阅额度 + 人民币成本（服务端入口 + 客户端视图 + 声明式设置） |
+| `source/projects/piwork-tools-plugin/` | 界面插件：顶栏 `⤴同步`（打包→推送→校验）+ `🛠PIwork` 状态视图 |
+| `source/patches/` | pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁 |
+| `source/configs/` | pi 设置模板、全局 AGENTS.md、模型库、版本档案（`pi-web-ui-profiles/`） |
+| `source/scripts/` | 启动器、断连守护、插件安装器、打包与同步脚本 |
+| `source/extras/page-picker-extension.zip` | 浏览器扩展（配合 `source/patches/apply-page-picker-all-urls.js`） |
+| `source/docs/after-install-checklist.md` | 装完之后要手动做的事 |
+
+单独补装/更新某个界面插件（浏览器里的 pi-web-ui 已在跑时）：
+
+```bash
+pi-web-ui install https://github.com/xieweimo/pi-web-ui-setup/tree/main/source/projects/piwork-tools-plugin --force
+```
+
+（一键安装已自动装好这两个插件，这条命令只在别处补装时用。）
 
 ## 不会做什么
 

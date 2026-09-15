@@ -1,0 +1,23 @@
+{
+  "shellPath": "C:\\Users\\X\\.pi\\agent\\win-git-bash\\bin\\bash.exe",
+  "lastChangelogVersion": "0.85.1",
+  "theme": "dark",
+  "showHardwareCursor": true,
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-flash",
+  "defaultThinkingLevel": "minimal",
+  "modelThinkingLevels": {
+    "deepseek/deepseek-v4-pro": "minimal",
+    "deepseek/deepseek-flash": "minimal"
+  },
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-web-access",
+    "npm:pi-mcp-adapter",
+    "npm:@juicesharp/rpiv-ask-user-question"
+  ],
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 40000
+  }
+}

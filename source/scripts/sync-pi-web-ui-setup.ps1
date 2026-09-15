@@ -1,0 +1,118 @@
+﻿# 一键同步：把本机对 pi / pi-web-ui 的改动同步到 GitHub 的 pi-web-ui-setup
+#
+# 做四件事：
+#   1. 重新打包便携安装包（含补丁、插件、定位模块、启动器）
+#   2. 同步到公开仓库目录 pi-web-ui-setup
+#   3. 提交并推送私有仓库 AIWork 与公开仓库 pi-web-ui-setup
+#   4. 从 GitHub 匿名下载关键文件，与本地逐个比对 hash，确认真的同步成功
+#
+# 用法：powershell -ExecutionPolicy Bypass -File scripts\sync-pi-web-ui-setup.ps1
+$ErrorActionPreference = 'Stop'
+
+$repoRoot   = Split-Path $PSScriptRoot -Parent
+$workRoot   = Split-Path $repoRoot -Parent                       # C:\AIWork\PI
+$privateDir = Split-Path $workRoot -Parent                       # C:\AIWork
+$publicDir  = Join-Path $workRoot 'pi-web-ui-setup'
+$zipName    = 'PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip'
+$files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source\docs\after-install-checklist.md', 'source\projects\piwork-tools-plugin\manifest.json')
+$rawBase    = 'https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main'
+
+function Info($m) { Write-Host $m }
+function Ok($m) { Write-Host $m -ForegroundColor Green }
+function Warn($m) { Write-Host $m -ForegroundColor Yellow }
+
+Info '=== 1/5 重新打包安装包 ==='
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'create-portable-pi-web-ui-bundle.ps1')
+$zipPath = Join-Path $repoRoot "archive\$zipName"
+if (-not (Test-Path $zipPath)) { throw "打包失败：$zipPath 不存在" }
+Copy-Item $zipPath (Join-Path $publicDir $zipName) -Force
+Ok ('  安装包已更新: ' + [math]::Round((Get-Item $zipPath).Length / 1KB, 1) + ' KB')
+
+Info '=== 2/5 镜像定制源码到公开仓库 source/ ==='
+# 公开仓库只放 zip 的话，别人（包括你自己换电脑）在 GitHub 上看不到任何定制内容——
+# 插件源码、补丁、配置模板、清单文档都藏在二进制 zip 里。这里把它们一并镜像到
+# pi-web-ui-setup/source/：既能在网页上直接浏览，也能用
+# `pi-web-ui install https://github.com/<owner>/pi-web-ui-setup/tree/main/source/projects/<插件>` 直接装插件。
+$mirror = @(
+    @{ from = 'projects\codex-usage-plugin';      to = 'source\projects\codex-usage-plugin' },
+    @{ from = 'projects\piwork-tools-plugin';     to = 'source\projects\piwork-tools-plugin' },
+    @{ from = 'patches';                          to = 'source\patches' },
+    @{ from = 'configs';                          to = 'source\configs' },
+    @{ from = 'docs\after-install-checklist.md'; to = 'source\docs\after-install-checklist.md' },
+    @{ from = 'extras\page-picker-extension.zip'; to = 'source\extras\page-picker-extension.zip' },
+    @{ from = 'scripts';                          to = 'source\scripts' }
+)
+$srcRoot = Join-Path $publicDir 'source'
+Remove-Item $srcRoot -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($m in $mirror) {
+    $from = Join-Path $repoRoot $m.from
+    $to = Join-Path $publicDir $m.to
+    if (-not (Test-Path $from)) { Warn ('  跳过（不存在）：' + $m.from); continue }
+    New-Item -ItemType Directory -Force -Path (Split-Path $to -Parent) | Out-Null
+    Copy-Item $from $to -Recurse -Force
+}
+# 日志/备份不入公开仓库
+Get-ChildItem $srcRoot -Recurse -File -Include *.log,*.bak -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+Ok ('  已镜像 ' + $mirror.Count + ' 项到 source/')
+
+Info '=== 3/5 提交并推送两个仓库 ==='
+foreach ($dir in @($privateDir, $publicDir)) {
+    Push-Location $dir
+    try {
+        $dirty = (git status --porcelain)
+        if ($dirty) {
+            $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
+            git add -A | Out-Null
+            git commit -q -m "同步 pi / pi-web-ui 定制（$stamp）" | Out-Null
+            Info ("  已提交: " + (Split-Path $dir -Leaf))
+        } else {
+            Info ("  无改动: " + (Split-Path $dir -Leaf))
+        }
+        $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+        git push -q origin $branch
+        $local = (git rev-parse HEAD).Trim()
+        $remote = (git rev-parse "origin/$branch").Trim()
+        if ($local -ne $remote) { throw "推送后仍不一致: $dir" }
+        Ok ("  已推送: " + (Split-Path $dir -Leaf) + " " + $local.Substring(0, 7))
+    } finally {
+        Pop-Location
+    }
+}
+
+Info '=== 4/5 从 GitHub 匿名核对（不登录） ==='
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+try { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy } catch { }
+
+$failed = @()
+foreach ($f in $files) {
+    $localFile = Join-Path $publicDir $f
+    $localHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
+    $got = $null
+    for ($i = 1; $i -le 4 -and -not $got; $i++) {
+        try {
+            $tmp = Join-Path $env:TEMP ("raw-" + $f + "-" + $i)
+            $url = "$rawBase/$f`?t=" + [guid]::NewGuid().ToString('N')
+            Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 60
+            $got = (Get-FileHash $tmp -Algorithm SHA256).Hash
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        } catch {
+            Start-Sleep -Seconds 3
+        }
+    }
+    if ($got -eq $localHash) {
+        Ok ("  一致  $f")
+    } else {
+        Warn ("  不一致 $f  (本地 $($localHash.Substring(0,12)) / 远端 " + ($(if ($got) { $got.Substring(0,12) } else { '取不到' })) + ')')
+        $failed += $f
+    }
+}
+
+Info '=== 5/5 结果 ==='
+if ($failed.Count -gt 0) {
+    Warn ('  以下文件与 GitHub 不一致（CDN 可能仍在缓存，稍后重跑即可）：' + ($failed -join ', '))
+    exit 2
+}
+Ok '  全部一致，pi-web-ui-setup 已是最新，可随时随地安装。'
+Info ''
+Info '机房/新电脑安装命令（PowerShell）：'
+Info "  `$u='$rawBase/install.ps1?t='+(Get-Random);try{`$s=irm `$u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy;`$s=irm `$u};iex `$s"

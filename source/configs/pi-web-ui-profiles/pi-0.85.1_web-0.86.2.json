@@ -1,0 +1,12 @@
+{
+  "piVersion": "0.85.1",
+  "piWebUiVersion": "0.86.2",
+  "patches": [
+    "patches/patch-pi-web-ui-usage-cost.js",
+    "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-hide-forked-sessions.js",
+    "patches/patch-pi-web-ui-recovery-ui.js",
+    "patches/apply-stop-button.ps1"
+  ],
+  "notes": "已验证（pi 0.85.1 + pi-web-ui 0.86.2）：额度/按量成本、模型切换即时刷新、历史列表去重（fork 链尾）、断连恢复按钮、红色停止按钮。原则：界面/交互能力优先做成数据目录插件（projects/*-plugin，升级不动），补丁只保留必须改包内源码的 5 项。已淘汰：apply-cny-rate（被 codex-usage 插件的人民币显示取代）、apply-project-remove-notice（0.86 起失效）——见 archive/patches-retired/。"
+}

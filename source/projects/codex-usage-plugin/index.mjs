@@ -1,0 +1,517 @@
+/**
+ * codex-usage —— 订阅额度 / 成本显示（服务端入口）
+ *
+ * 两条数据线，按当前会话模型自动二选一：
+ *   1) 订阅额度：读 <agentDir>/auth.json 里 openai-codex 的 OAuth 凭证，请求
+ *      ChatGPT 后端 GET https://chatgpt.com/backend-api/wham/usage
+ *      → 5 小时窗口 / 每周窗口的已用百分比、重置时间、可用 reset 次数。
+ *   2) 按量计费：非订阅模型时逐条累计当前会话的非 openai-codex 消息成本
+ *      （剔除 ChatGPT/Codex 订阅调用的理论 API 价）× 实时汇率 → 人民币。
+ *
+ * 结果经 host.broadcast({ state }) 推给同插件的客户端视图（client/entry.mjs）。
+ * 只读凭证、不写、不打印；token 永远不进日志与广播数据。
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { connect as tlsConnect } from "node:tls";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+/** ChatGPT 后端的订阅用量端点（Codex CLI /status 背后的同一份数据）。 */
+const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+/** 免费汇率源（无需 key），返回 rates.CNY。 */
+const FX_URL = "https://open.er-api.com/v6/latest/USD";
+/** 走订阅额度而非按量计费的 provider。 */
+const CODEX_PROVIDER = "openai-codex";
+/** 汇率缓存时长：12 小时。 */
+const FX_TTL_MS = 12 * 3600_000;
+/** 汇率兜底值（抓取失败且无缓存时使用）。 */
+const FX_FALLBACK = 7.2;
+
+/** pi 的配置目录（agentDir）：可用 PI_CODING_AGENT_DIR 覆盖。 */
+function agentDir() {
+	const fromEnv = (process.env.PI_CODING_AGENT_DIR || "").trim();
+	return fromEnv || join(homedir(), ".pi", "agent");
+}
+
+function readJson(file) {
+	try {
+		return JSON.parse(readFileSync(file, "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+/** 读 openai-codex 的 OAuth 凭证；缺失/结构不对返回 null（绝不打印内容）。 */
+function readCodexAuth() {
+	const auth = readJson(join(agentDir(), "auth.json"));
+	const cred = auth?.[CODEX_PROVIDER];
+	if (!cred || typeof cred.access !== "string" || !cred.access) return null;
+	return {
+		access: cred.access,
+		// 账号 id：优先 auth.json 字段，兜底从 access token 的 JWT claim 里取
+		accountId:
+			typeof cred.accountId === "string" && cred.accountId
+				? cred.accountId
+				: (jwtClaim(cred.access, "https://api.openai.com/auth", "chatgpt_account_id") ?? ""),
+		expires: typeof cred.expires === "number" ? cred.expires : 0,
+	};
+}
+
+function jwtClaim(token, claimKey, field) {
+	try {
+		const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+		return payload?.[claimKey]?.[field] ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/** 代理地址：插件设置 → 环境变量 → pi 全局设置 httpProxy。 */
+function resolveProxy(cfg) {
+	const fromCfg = String(cfg.proxy ?? "").trim();
+	if (fromCfg) return fromCfg;
+	const fromEnv = (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || "").trim();
+	if (fromEnv) return fromEnv;
+	const settings = readJson(join(agentDir(), "settings.json"));
+	const fromPi = typeof settings?.httpProxy === "string" ? settings.httpProxy.trim() : "";
+	return fromPi || "";
+}
+
+// ---------------------------------------------------------------------------
+// HTTP（支持 HTTP 代理 CONNECT 隧道；Node 原生 fetch 不读代理环境变量）
+// ---------------------------------------------------------------------------
+
+function dechunk(buf) {
+	const parts = [];
+	let i = 0;
+	while (i < buf.length) {
+		const nl = buf.indexOf("\r\n", i);
+		if (nl < 0) break;
+		const size = parseInt(buf.subarray(i, nl).toString("latin1").split(";")[0], 16);
+		if (!Number.isFinite(size) || size <= 0) break;
+		const start = nl + 2;
+		parts.push(buf.subarray(start, start + size));
+		i = start + size + 2;
+	}
+	return Buffer.concat(parts);
+}
+
+/** 解析 HTTP/1.1 原始响应（仅 CONNECT 隧道分支需要）。 */
+function parseRawResponse(buf) {
+	const split = buf.indexOf("\r\n\r\n");
+	if (split < 0) throw new Error("代理响应缺少头部");
+	const head = buf.subarray(0, split).toString("latin1");
+	let body = buf.subarray(split + 4);
+	const lines = head.split("\r\n");
+	const status = Number(lines[0].split(" ")[1]) || 0;
+	const headers = {};
+	for (const line of lines.slice(1)) {
+		const i = line.indexOf(":");
+		if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+	}
+	if ((headers["transfer-encoding"] || "").toLowerCase().includes("chunked")) body = dechunk(body);
+	return { status, body: body.toString("utf8") };
+}
+
+function directGet(url, headers, timeoutMs) {
+	return new Promise((resolve, reject) => {
+		const req = httpsRequest(
+			url,
+			{ method: "GET", headers: { ...headers, "Accept-Encoding": "identity" }, timeout: timeoutMs },
+			(res) => {
+				const chunks = [];
+				res.on("data", (c) => chunks.push(c));
+				res.on("end", () =>
+					resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
+				);
+			},
+		);
+		req.on("timeout", () => req.destroy(new Error("请求超时")));
+		req.on("error", reject);
+		req.end();
+	});
+}
+
+function proxyGet(url, headers, proxy, timeoutMs) {
+	return new Promise((resolve, reject) => {
+		const target = new URL(url);
+		const px = new URL(proxy);
+		const port = px.port ? Number(px.port) : px.protocol === "https:" ? 443 : 80;
+		const req = httpRequest({
+			host: px.hostname,
+			port,
+			method: "CONNECT",
+			path: `${target.hostname}:443`,
+			headers: { Host: `${target.hostname}:443` },
+			timeout: timeoutMs,
+		});
+		req.on("connect", (res, socket) => {
+			if (res.statusCode !== 200) {
+				socket.destroy();
+				reject(new Error(`代理 CONNECT 失败：HTTP ${res.statusCode}`));
+				return;
+			}
+			const tls = tlsConnect({ socket, servername: target.hostname }, () => {
+				const lines = [
+					`GET ${target.pathname}${target.search} HTTP/1.1`,
+					`Host: ${target.hostname}`,
+					...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+					"Accept-Encoding: identity",
+					"Connection: close",
+				];
+				tls.write(`${lines.join("\r\n")}\r\n\r\n`);
+			});
+			const chunks = [];
+			tls.on("data", (c) => chunks.push(c));
+			tls.on("end", () => {
+				try {
+					resolve(parseRawResponse(Buffer.concat(chunks)));
+				} catch (err) {
+					reject(err);
+				}
+			});
+			tls.on("error", reject);
+			tls.setTimeout(timeoutMs, () => tls.destroy(new Error("响应超时")));
+		});
+		req.on("timeout", () => req.destroy(new Error("代理连接超时")));
+		req.on("error", reject);
+		req.end();
+	});
+}
+
+function httpGet(url, headers, proxy, timeoutMs = 20_000) {
+	return proxy ? proxyGet(url, headers, proxy, timeoutMs) : directGet(url, headers, timeoutMs);
+}
+
+// ---------------------------------------------------------------------------
+// 数据组装
+// ---------------------------------------------------------------------------
+
+function normWindow(w) {
+	if (!w || typeof w !== "object") return null;
+	const used = Number(w.used_percent);
+	const resetAtSec = Number(w.reset_at);
+	return {
+		usedPercent: Number.isFinite(used) ? used : null,
+		windowSeconds: Number(w.limit_window_seconds) || null,
+		resetAt: Number.isFinite(resetAtSec) ? resetAtSec * 1000 : null,
+		resetAfterSeconds: Number(w.reset_after_seconds) || null,
+	};
+}
+
+/** 当前选中模型优先；没有时才退回最后一条 assistant 消息（兼容旧版宿主）。 */
+function pickModel(conv) {
+	const active = conv?.activeModel;
+	if (active && (active.provider || active.model || active.id)) {
+		return { provider: active.provider ?? null, model: active.model ?? active.id ?? null };
+	}
+	const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const m = messages[i];
+		if (m?.role === "assistant" && (m.provider || m.model)) {
+			return { provider: m.provider ?? null, model: m.model ?? null };
+		}
+	}
+	const streaming = conv?.streamingMessage;
+	if (streaming && (streaming.provider || streaming.model)) {
+		return { provider: streaming.provider ?? null, model: streaming.model ?? null };
+	}
+	return null;
+}
+
+/**
+ * 逐条汇总按量模型成本。会话总 cost 会混入 openai-codex 的理论 API 价格，
+ * 对 ChatGPT 订阅用户没有实际账单意义，故这里明确排除。
+ *
+ * usageCost 由 pi-web-ui 的最小兼容补丁提供；它只是一项数值，不含消息内容。
+ */
+function meteredSessionCost(conv) {
+	let usd = 0;
+	let meteredMessages = 0;
+	let subscriptionMessages = 0;
+	let missingCostMessages = 0;
+	for (const m of Array.isArray(conv?.messages) ? conv.messages : []) {
+		if (m?.role !== "assistant" || !m.provider) continue;
+		const cost = Number(m.usageCost);
+		if (!Number.isFinite(cost)) {
+			missingCostMessages += 1;
+			continue;
+		}
+		if (m.provider === CODEX_PROVIDER) {
+			subscriptionMessages += 1;
+			continue;
+		}
+		usd += cost;
+		meteredMessages += 1;
+	}
+	return { usd, meteredMessages, subscriptionMessages, missingCostMessages };
+}
+
+async function fetchUsage(cfg, proxy, auth) {
+	const res = await httpGet(
+		USAGE_URL,
+		{
+			Authorization: `Bearer ${auth.access}`,
+			"ChatGPT-Account-ID": auth.accountId,
+			originator: "pi",
+			Accept: "application/json",
+		},
+		proxy,
+	);
+	if (res.status === 401) throw new Error("凭证已过期（HTTP 401）——请在 pi 里重新登录 Codex");
+	if (res.status === 403) throw new Error("账号/地区不被允许（HTTP 403）——检查代理出口地区");
+	if (res.status !== 200) throw new Error(`HTTP ${res.status}：${res.body.slice(0, 200)}`);
+	let data;
+	try {
+		data = JSON.parse(res.body);
+	} catch {
+		throw new Error("响应不是 JSON（可能被代理/网关拦截）");
+	}
+	return data;
+}
+
+/** 汇率：设置 fixed 直接用；live 走 12 小时缓存的实时抓取，失败退缓存再退兜底。 */
+async function getFx(cfg, proxy, storage) {
+	if (cfg.rateSource === "fixed") {
+		const rate = Number(cfg.fixedRate) || FX_FALLBACK;
+		return { rate, source: "fixed", at: Date.now(), stale: false };
+	}
+	const cached = storage.get("fx", null);
+	const fresh = cached && Date.now() - Number(cached.at ?? 0) < FX_TTL_MS;
+	if (fresh) return { rate: cached.rate, source: cached.source ?? "live", at: cached.at, stale: false };
+	try {
+		const res = await httpGet(FX_URL, { Accept: "application/json" }, proxy, 15_000);
+		if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+		const rate = Number(JSON.parse(res.body)?.rates?.CNY);
+		if (!Number.isFinite(rate) || rate <= 0) throw new Error("未解析到 CNY 汇率");
+		const next = { rate, source: "live", at: Date.now() };
+		storage.set("fx", next);
+		return { ...next, stale: false };
+	} catch (err) {
+		if (cached?.rate) return { rate: cached.rate, source: cached.source ?? "live", at: cached.at, stale: true };
+		return { rate: FX_FALLBACK, source: "fallback", at: Date.now(), stale: true, error: String(err?.message ?? err) };
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 插件入口
+// ---------------------------------------------------------------------------
+
+export default {
+	activate(host) {
+		let cfg = host.getSettings?.() ?? {};
+		let timer = null;
+		let inflight = false;
+		let pendingRefreshReason = null;
+		/** undici 全局 dispatcher 是否已配置（null = 未尝试）。 */
+		let dispatcherReady = null;
+		let lastState = { kind: "loading", at: Date.now(), statusBar: true };
+
+		/** 统一附加客户端需要的设置项（状态栏注入开关等），再广播。 */
+		function push(state) {
+			lastState = {
+				...state,
+				mode: state.mode ?? cfg.mode,
+				statusBar: cfg.statusBar !== false,
+				hideNativeCost: cfg.hideNativeCost !== false,
+				serviceProxy: process.env.HTTPS_PROXY || process.env.https_proxy || null,
+				dispatcherReady,
+				refreshSec: Math.min(Math.max(Number(cfg.refreshSec) || 60, 15), 3600),
+			};
+			host.broadcast({ state: lastState });
+		}
+
+		function errorState(message, model) {
+			return { kind: "error", at: Date.now(), message, model, mode: cfg.mode };
+		}
+
+		async function refresh(reason) {
+			// 模型切换发生在一次旧刷新尚未结束时，不能丢掉新模型的刷新请求。
+			if (inflight) {
+				pendingRefreshReason = reason;
+				return;
+			}
+			inflight = true;
+			try {
+				const conv = host.getActiveConversation?.() ?? null;
+				const model = pickModel(conv);
+				const proxy = resolveProxy(cfg);
+				const auth = readCodexAuth();
+				const modelChanged =
+					model?.provider !== lastState?.model?.provider || model?.model !== lastState?.model?.model;
+
+				// auto：跟随当前会话模型；模型未知时退化为「有 Codex 凭证就显示额度」。
+				const isCodex =
+					cfg.mode === "codex" ||
+					(cfg.mode === "auto" && (model ? model.provider === CODEX_PROVIDER : Boolean(auth)));
+
+				// 选择模型的瞬间先清掉旧模型数字；Codex 网络查询完成后再填入真实额度。
+				if (modelChanged) push({ kind: "loading", at: Date.now(), mode: cfg.mode, reason: "model-change", model });
+
+				if (isCodex) {
+					if (!auth) {
+						push(errorState("未找到 openai-codex 凭证（<agentDir>/auth.json）——请先在 pi 里登录", model));
+						return;
+					}
+					const expired = auth.expires > 0 && Date.now() > auth.expires;
+					try {
+						const usage = await fetchUsage(cfg, proxy, auth);
+						const rl = usage?.rate_limit ?? {};
+						push({
+							kind: "codex",
+							at: Date.now(),
+							mode: cfg.mode,
+							reason,
+							model,
+							plan: usage?.plan_type ?? null,
+							email: maskEmail(usage?.email),
+							limitReached: Boolean(rl.limit_reached),
+							allowed: rl.allowed !== false,
+							primary: normWindow(rl.primary_window),
+							secondary: normWindow(rl.secondary_window),
+							resets: Number(usage?.rate_limit_reset_credits?.available_count) || 0,
+							expired,
+						});
+					} catch (err) {
+						host.log("usage fetch failed:", String(err?.message ?? err));
+						push(errorState(String(err?.message ?? err), model));
+					}
+					return;
+				}
+
+				// 非订阅：只统计按量模型 → 人民币；明确不混入 Codex 订阅理论成本。
+				const fx = await getFx(cfg, proxy, host.storage);
+				const cost = meteredSessionCost(conv);
+				push({
+					kind: "cost",
+					at: Date.now(),
+					mode: cfg.mode,
+					reason,
+					model,
+					usd: cost.usd,
+					cny: cost.usd * fx.rate,
+					meteredMessages: cost.meteredMessages,
+					subscriptionMessagesExcluded: cost.subscriptionMessages,
+					missingCostMessages: cost.missingCostMessages,
+					rate: fx.rate,
+					rateSource: fx.source,
+					rateAt: fx.at,
+					rateStale: Boolean(fx.stale),
+					rateError: fx.error ?? null,
+					totalMessages: Number(conv?.stats?.totalMessages) || 0,
+				});
+			} finally {
+				inflight = false;
+				const queued = pendingRefreshReason;
+				pendingRefreshReason = null;
+				if (queued) queueMicrotask(() => void refresh(queued));
+			}
+		}
+
+		/** 把 pi 的 httpProxy 注入服务进程环境。
+		 *
+		 * pi SDK 的 Codex/OpenAI 请求只认进程环境变量（https_proxy / all_proxy，见
+		 * 其 getProxyForUrl），而 pi-web-ui 服务自身不会读 pi 的 settings.json ——
+		 * 不注入就会出现「大模型 API 出错，正在自动重试：fetch failed」
+		 * （国内直连 chatgpt.com 必失败）。只在环境里没有代理时注入，不覆盖用户设置。 */
+		function inheritProxyEnv() {
+			if (cfg.inheritProxy === false) return;
+			if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.ALL_PROXY || process.env.all_proxy) return;
+			const proxy = resolveProxy({ proxy: "" });
+			if (!proxy) return;
+			process.env.HTTP_PROXY = process.env.HTTP_PROXY || proxy;
+			process.env.HTTPS_PROXY = proxy;
+			// 本机服务 / 浏览器回连不走代理，避免 localhost:8787 被代理返回 502。
+			const noProxy = new Set(String(process.env.NO_PROXY || process.env.no_proxy || "").split(",").map((x) => x.trim()).filter(Boolean));
+			for (const hostName of ["localhost", "127.0.0.1", "::1"]) noProxy.add(hostName);
+			process.env.NO_PROXY = [...noProxy].join(",");
+			process.env.no_proxy = process.env.NO_PROXY;
+			host.log(`已为服务进程注入代理（Codex 等请求将走 ${proxy}）`);
+		}
+
+		/** 走 fetch 的请求靠 undici 全局 dispatcher，光设环境变量不够；
+		 *  这里加载 pi SDK 的 http-dispatcher 并配置（EnvHttpProxyAgent 读 env，
+		 *  自动 bypass localhost）。任何一步失败只记日志，不影响主进程。 */
+		async function configureDispatcher() {
+			if (cfg.inheritProxy === false) return;
+			try {
+				const { pathToFileURL } = await import("node:url");
+				// pi-web-ui 的 bin 路径 = <pkgRoot>/bin/pi-web-ui.mjs，据此定位 pi SDK
+				// （不用 createRequire：在服务进程里解析失败过）
+				const entry = process.argv[1] || "";
+				const pkgRoot = entry ? dirname(dirname(entry)) : process.cwd();
+				const candidates = [
+					join(pkgRoot, "node_modules/@earendil-works/pi-coding-agent/dist/core/http-dispatcher.js"),
+					join(pkgRoot, "../@earendil-works/pi-coding-agent/dist/core/http-dispatcher.js"),
+					join(pkgRoot, "../../@earendil-works/pi-coding-agent/dist/core/http-dispatcher.js"),
+				];
+				let loaded = null;
+				for (const p of candidates) {
+					if (!existsSync(p)) continue;
+					loaded = await import(pathToFileURL(p).href);
+					break;
+				}
+				if (!loaded) throw new Error("未找到 pi SDK 的 http-dispatcher.js");
+				if (typeof loaded.configureHttpDispatcher !== "function") throw new Error("找不到 configureHttpDispatcher");
+				loaded.configureHttpDispatcher();
+				dispatcherReady = true;
+				host.log("已配置 undici 全局 dispatcher（EnvHttpProxyAgent）");
+			} catch (err) {
+				dispatcherReady = false;
+				host.log("配置 dispatcher 跳过：", String(err?.message ?? err));
+			}
+		}
+
+		function restartTimer() {
+			if (timer) clearInterval(timer);
+			const sec = Math.min(Math.max(Number(cfg.refreshSec) || 60, 15), 3600);
+			timer = setInterval(() => void refresh("timer"), sec * 1000);
+			// 定时器不该拖住进程退出
+			timer.unref?.();
+		}
+
+		const offMessage = host.onMessage((payload) => {
+			if (payload?.action === "refresh") void refresh("client");
+			else if (payload?.action === "hello") push(lastState);
+		});
+		const offAttach = host.onAttach((clientId) => {
+			void refresh("attach");
+			host.sendTo?.(clientId, { state: lastState });
+		});
+		// 宿主在 setModel() 成功后会立即发出此事件；无需等下一轮回复或刷新周期。
+		const offConv = host.onConversationChanged(() => void refresh("conversation"));
+		const offRun = host.onRunEvent((ev) => {
+			if (ev?.type === "run_end" || ev?.type === "message") void refresh("run");
+		});
+		const offSettings = host.onSettingsChanged((next) => {
+			cfg = next ?? {};
+			restartTimer();
+			void refresh("settings");
+		});
+
+		restartTimer();
+		inheritProxyEnv();
+		void configureDispatcher().then(() => refresh("activate"));
+		host.log("activated; mode=", cfg.mode, "rateSource=", cfg.rateSource);
+
+		return () => {
+			if (timer) clearInterval(timer);
+			offMessage?.();
+			offAttach?.();
+			offConv?.();
+			offRun?.();
+			offSettings?.();
+			host.log("deactivated");
+		};
+	},
+};
+
+/** 邮箱只保留首尾，避免明文外泄到前端存储。 */
+function maskEmail(email) {
+	const s = String(email ?? "");
+	const at = s.indexOf("@");
+	if (at <= 0) return null;
+	return `${s.slice(0, 2)}***${s.slice(at)}`;
+}
