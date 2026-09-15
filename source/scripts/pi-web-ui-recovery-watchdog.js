@@ -11,10 +11,37 @@ const shim = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData',
 const settingsFile = path.join(os.homedir(), '.pi', 'agent', 'settings.json');
 let restarting = false;
 
+/** Windows 系统代理（WinINET）：pi settings.json 里的 httpProxy 丢了之后的兜底。 */
+function systemProxy() {
+  try {
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-Command',
+       "$k=Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; if($k -and $k.ProxyEnable -eq 1){[string]$k.ProxyServer}"],
+      { encoding: 'utf8', timeout: 8000 },
+    ).trim();
+    if (!out) return '';
+    let srv = out;
+    // ProxyServer 可能是 "host:port" 或 "http=host:port;https=host:port"
+    if (srv.includes('=')) {
+      const map = {};
+      for (const kv of srv.split(';')) {
+        const i = kv.indexOf('=');
+        if (i > 0) map[kv.slice(0, i).trim().toLowerCase()] = kv.slice(i + 1).trim();
+      }
+      srv = map.https || map.http || '';
+    }
+    if (!srv) return '';
+    return /^https?:\/\//i.test(srv) ? srv : 'http://' + srv;
+  } catch {
+    return '';
+  }
+}
 function envForWeb() {
   const env = { ...process.env };
   try {
-    const proxy = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).httpProxy;
+    let proxy = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).httpProxy;
+    if (!proxy) proxy = systemProxy();
     if (proxy) {
       env.HTTP_PROXY ||= proxy;
       env.HTTPS_PROXY ||= proxy;

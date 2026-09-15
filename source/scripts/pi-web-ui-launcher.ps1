@@ -52,20 +52,15 @@ if (-not (Test-Path $shim)) {
 # pi 的 Codex / OpenAI 请求从【进程环境变量】读代理（https_proxy / all_proxy），
 # 而 pi-web-ui 服务自己不会去读 pi 的 settings.json —— 不注入就会出现
 # 「大模型 API 出错，正在自动重试：fetch failed」（国内直连 chatgpt.com 失败）。
-# 这里把 pi 全局设置里的 httpProxy 注入本进程，下面的 Start-Process 子进程会继承。
-$piSettings = Join-Path $env:USERPROFILE '.pi\agent\settings.json'
-if (Test-Path $piSettings) {
-    try {
-        $proxy = (Get-Content $piSettings -Raw | ConvertFrom-Json).httpProxy
-        if ($proxy) {
-            if (-not $env:HTTP_PROXY)  { $env:HTTP_PROXY  = $proxy }
-            if (-not $env:HTTPS_PROXY) { $env:HTTPS_PROXY = $proxy }
-            # 本机服务 / 浏览器回连绝不能绕到代理，否则 127.0.0.1:8787 会返回 502。
-            $localNoProxy = 'localhost,127.0.0.1,::1'
-            $env:NO_PROXY = if ($env:NO_PROXY) { "$($env:NO_PROXY),$localNoProxy" } else { $localNoProxy }
-            $env:no_proxy = $env:NO_PROXY
-        }
-    } catch { }
+# 来源优先级（见 scripts\resolve-proxy.ps1）：pi settings 的 httpProxy → Windows 系统代理。
+# 第二层是防复发：2026-09-13 settings.json 里的 httpProxy 丢过一次，当时服务一直没重启所以
+# 没被发现，一重启就全断 —— 现在系统代理开着就能自愈。
+$resolveProxy = Join-Path $PSScriptRoot 'resolve-proxy.ps1'
+if (Test-Path $resolveProxy) {
+    . $resolveProxy
+    if (-not (Set-PiProxyEnv)) {
+        Write-Host '  没找到可用代理（pi settings.json 无 httpProxy、系统代理也没开）：Codex 等境外模型可能报 fetch failed'
+    }
 }
 
 # 0.6 为插件补充逐条 usageCost（用于剔除 Codex 订阅的理论 API 成本）。

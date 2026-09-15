@@ -16,6 +16,19 @@ foreach ($p in $template.PSObject.Properties) { $current | Add-Member -Force Not
 $json = $current | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($settingsFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 
+# 代理防复发：设置里没有 httpProxy、但本机确实开着系统代理时，把它写进 pi 设置。
+# 不写的话 Codex 等境外模型会直连 chatgpt.com，全部报 fetch failed（2026-09-13 丢过一次 httpProxy）。
+$resolveProxy = Join-Path $root 'scripts\resolve-proxy.ps1'
+if ((Test-Path $resolveProxy) -and -not $current.httpProxy) {
+    . $resolveProxy
+    $detected = Get-PiProxyUrl
+    if ($detected) {
+        $current | Add-Member -Force NoteProperty httpProxy $detected.url
+        [System.IO.File]::WriteAllText($settingsFile, ($current | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host ('  已把检测到的代理写入 pi 设置（来源：' + $detected.source + '）：' + $detected.url)
+    }
+}
+
 # 全局 AGENTS.md 与自定义模型库：只补缺失，已存在则原样保留（不覆盖用户自己的改动）。
 $seedFiles = @(
     @{ src = 'configs\global-AGENTS.md';  dst = 'AGENTS.md';         label = '全局 AGENTS.md' },
