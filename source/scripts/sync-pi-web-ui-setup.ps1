@@ -86,8 +86,17 @@ foreach ($dir in @($privateDir, $publicDir)) {
 Info '=== 4/5 从 GitHub 匿名核对（不登录） ==='
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 try { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy } catch { }
+# 国内直连 raw.githubusercontent 可能超时：如果 pi 设置里有 httpProxy，就给校验请求也用上
+$piSettingsFile = Join-Path $env:USERPROFILE '.pi\agent\settings.json'
+if (Test-Path $piSettingsFile) {
+    try {
+        $proxyUrl = (Get-Content $piSettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json).httpProxy
+        if ($proxyUrl) { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($proxyUrl) }
+    } catch { }
+}
 
 $failed = @()
+$offline = 0
 foreach ($f in $files) {
     $localFile = Join-Path $publicDir $f
     $localHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
@@ -107,7 +116,7 @@ foreach ($f in $files) {
         Ok ("  一致  $f")
     } else {
         Warn ("  不一致 $f  (本地 $($localHash.Substring(0,12)) / 远端 " + ($(if ($got) { $got.Substring(0,12) } else { '取不到' })) + ')')
-        $failed += $f
+        if ($got) { $failed += $f } else { $offline += 1 }
     }
 }
 
@@ -115,6 +124,10 @@ Info '=== 5/5 结果 ==='
 if ($failed.Count -gt 0) {
     Warn ('  以下文件与 GitHub 不一致（CDN 可能仍在缓存，稍后重跑即可）：' + ($failed -join ', '))
     exit 2
+}
+if ($offline -gt 0) {
+    Warn ("  有 $offline 个文件因网络不通未能匿名核对（raw.githubusercontent 超时）——推送本身已由第 3 步的 git 比对验证")
+    exit 0
 }
 Ok '  全部一致，pi-web-ui-setup 已是最新，可随时随地安装。'
 Info ''
