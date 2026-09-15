@@ -14,7 +14,7 @@ $workRoot   = Split-Path $repoRoot -Parent                       # C:\AIWork\PI
 $privateDir = Split-Path $workRoot -Parent                       # C:\AIWork
 $publicDir  = Join-Path $workRoot 'pi-web-ui-setup'
 $zipName    = 'PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip'
-$files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source\docs\after-install-checklist.md', 'source\projects\piwork-tools-plugin\manifest.json')
+$files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source/docs/after-install-checklist.md', 'source/projects/piwork-tools-plugin/manifest.json')
 $rawBase    = 'https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main'
 
 function Info($m) { Write-Host $m }
