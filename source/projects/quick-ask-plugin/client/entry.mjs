@@ -88,4 +88,4 @@ function register() {
 	host().onUiAction("open", open); registered = true;
 }
 register(); setTimeout(register, 0);
-export default { mount(container) { container.innerHTML = '<p style="padding:16px">点击顶栏「💬 临时问问」打开独立问答面板。</p>'; register(); return () => {}; } };
+export default { mount(container) { container.innerHTML = '<p style="padding:16px">正在打开独立临时问答面板…</p>'; setTimeout(open, 0); return () => {}; } };
