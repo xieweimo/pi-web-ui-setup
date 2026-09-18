@@ -21,6 +21,19 @@ function Info($m) { Write-Host $m }
 function Ok($m) { Write-Host $m -ForegroundColor Green }
 function Warn($m) { Write-Host $m -ForegroundColor Yellow }
 
+# 不用 Get-FileHash：本机 PowerShell 5.1 的 Microsoft.PowerShell.Utility 偶尔加载不出来
+# （Import-Module 也救不回来），校验就会整段报 CommandNotFoundException。
+# 直接走 .NET 计算 SHA256，只依赖 Base Class Library，永远可用。
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return (($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join '')
+        } finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 Info '=== 1/5 重新打包安装包 ==='
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'create-portable-pi-web-ui-bundle.ps1')
 $zipPath = Join-Path $repoRoot "archive\$zipName"
@@ -100,7 +113,7 @@ $failed = @()
 $offline = 0
 foreach ($f in $files) {
     $localFile = Join-Path $publicDir $f
-    $localHash = (Get-FileHash $localFile -Algorithm SHA256).Hash
+    $localHash = Get-Sha256 $localFile
     $got = $null
     # 临时文件名不能带路径分隔符（source/... 这种 $f 直接拼进去会让 -OutFile 写到不存在的子目录而报错）
     $safeName = ($f -replace '[^A-Za-z0-9._-]', '_')
@@ -109,7 +122,7 @@ foreach ($f in $files) {
             $tmp = Join-Path $env:TEMP ("raw-" + $safeName + "-" + $i)
             $url = "$rawBase/$f`?t=" + [guid]::NewGuid().ToString('N')
             Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 20
-            $got = (Get-FileHash $tmp -Algorithm SHA256).Hash
+            $got = Get-Sha256 $tmp
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         } catch {
             Start-Sleep -Seconds 3
