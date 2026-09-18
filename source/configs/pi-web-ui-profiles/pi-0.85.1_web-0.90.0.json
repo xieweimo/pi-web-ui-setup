@@ -9,5 +9,5 @@
     "patches/patch-pi-web-ui-recovery-ui.js",
     "patches/apply-stop-button.ps1"
   ],
-  "notes": "已验证（pi 0.85.1 + pi-web-ui 0.90.0）：额度/按量成本、模型切换即时刷新、历史列表去重（fork 链尾）、永久隐藏指定最近项目、断连恢复按钮、红色停止按钮。0.90.0 变化与应对：① agent-service.js 里「推历史列表」的 for (const s of infos) 循环与 searchSessions() 的循环写法相同，hide-forked-sessions 的锚点已改为连同上一行 const sessions = new Map() 一起匹配以保证唯一；② 额度插件使用官方 bottombar 槽位，避免窄窗口状态栏溢出；③ recent-project 的「删除」会全局持久生效（即使重开 cwd 或扫描旧 session 也不复活），名单保存在 ~/.pi-web/client-state.json 的 __piweb_global__.permanentRemovedProjects；④ 会话快照仍在 dist/server/serialize.js，usage-cost 补丁锚点未变。升级 pi-web-ui 后必须重启服务（launcher 启动时会幂等重打补丁），否则 dist 被 npm 覆盖、补丁消失。"
+  "notes": "已验证（pi 0.85.1 + pi-web-ui 0.90.0）：额度/按量成本、模型切换即时刷新、历史列表去重（fork 链尾）、永久隐藏指定最近项目、断连恢复按钮、红色停止按钮。0.90.0 变化与应对：① agent-service.js 里「推历史列表」的 for (const s of infos) 循环与 searchSessions() 的循环写法相同，hide-forked-sessions 的锚点已改为连同上一行 const sessions = new Map() 一起匹配以保证唯一；② 额度插件使用官方 bottombar 槽位，避免窄窗口状态栏溢出；③ recent-project 的删除会写入全局名单，阻止历史扫描自动复活；用户主动重新打开目录会清除该项目的删除记录并恢复到最近项目；④ 会话快照仍在 dist/server/serialize.js，usage-cost 补丁锚点未变。升级 pi-web-ui 后必须重启服务（launcher 启动时会幂等重打补丁），否则 dist 被 npm 覆盖、补丁消失。"
 }
