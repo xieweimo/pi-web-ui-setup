@@ -32,11 +32,6 @@ $desktop = [Environment]::GetFolderPath('Desktop')
 if (-not $desktop) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }
 $lnk = Join-Path $desktop 'Pi Web UI.lnk'
 if (Test-Path $lnk) { Remove-Item $lnk -Force -ErrorAction SilentlyContinue; Write-Host 'removed desktop shortcut' }
-# Keep this file ASCII-only because uninstall.ps1 is fetched through irm | iex.
-$checklistName = [string]::Concat(([char]0x88C5), ([char]0x5B8C), ([char]0x4E4B), ([char]0x540E), ([char]0x8981), ([char]0x505A), ([char]0x7684), ([char]0x4E8B)) + '.txt'
-$checklist = Join-Path $desktop $checklistName
-if (Test-Path $checklist) { Remove-Item $checklist -Force -ErrorAction SilentlyContinue; Write-Host 'removed installer checklist' }
-
 # 5. pi-web-ui plugins deployed by this installer into the data dir
 foreach ($id in @('codex-usage', 'piwork-tools', 'quick-ask')) {
   $plugin = Join-Path $env:USERPROFILE ('.pi-web\plugins\' + $id)
