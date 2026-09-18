@@ -299,6 +299,59 @@ async function getFx(cfg, proxy, storage) {
 // 插件入口
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 底部状态栏摘要（官方 bottombar 槽位用；文案与 client/entry.mjs 的 barText 保持一致）
+// ---------------------------------------------------------------------------
+
+function barPct(n) {
+	return Number.isFinite(n) ? `${Math.round(n)}%` : "–";
+}
+
+/** 秒 → 5h / 每周 / Nh 这类窗口标签。 */
+function barWindowLabel(win) {
+	const sec = Number(win?.windowSeconds);
+	if (!Number.isFinite(sec) || sec <= 0) return "窗口";
+	if (sec >= 7 * 86400 - 60) return "每周";
+	if (Math.abs(sec - 18000) < 300) return "5h";
+	const h = sec / 3600;
+	return h >= 1 ? `${Math.round(h)}h` : `${Math.round(sec / 60)}m`;
+}
+
+/** 一行摘要：订阅 → 窗口百分比；按量 → 人民币成本。 */
+function barText(state) {
+	if (!state || state.kind === "loading") return "⚡ …";
+	if (state.kind === "error") return "⚡ 额度获取失败";
+	if (state.kind === "cost") return `⚡ ¥${Number(state.cny || 0).toFixed(2)}`;
+	const bits = [];
+	for (const w of [state.primary, state.secondary]) {
+		if (!w) continue;
+		bits.push(`${barWindowLabel(w)} ${barPct(w.usedPercent)}`);
+	}
+	if (state.resets > 0) bits.push(`${state.resets} reset`);
+	if (!bits.length) return "⚡ Codex";
+	return `⚡ ${bits.join(" · ")}`;
+}
+
+/** 悬停提示：比状态栏一行字更详细（不包含任何凭证）。 */
+function barHint(state) {
+	if (!state) return "订阅额度 / 成本";
+	if (state.kind === "error") return `订阅额度获取失败：${state.message}`;
+	if (state.kind === "cost") {
+		const rate = Number(state.rate);
+		const rateText = Number.isFinite(rate) ? `（1 USD = ${rate.toFixed(4)} CNY` + (state.rateSource ? `，来源 ${state.rateSource}` : "") + "）" : "";
+		return `本会话按量成本 ≈ $${Number(state.usd || 0).toFixed(4)} ${rateText}`;
+	}
+	const parts = [];
+	for (const w of [state.primary, state.secondary]) {
+		if (!w) continue;
+		const left = Number.isFinite(w.resetAfterSeconds) ? `重置 ${Math.max(0, Math.round(w.resetAfterSeconds / 60))}m` : "";
+		parts.push(`${barWindowLabel(w)} 已用 ${barPct(w.usedPercent)}${left ? " · " + left : ""}`);
+	}
+	if (state.plan) parts.push(`计划 ${state.plan}`);
+	if (state.resets > 0) parts.push(`可用 reset ${state.resets}`);
+	return parts.length ? parts.join(" | ") : "Codex 订阅额度";
+}
+
 export default {
 	activate(host) {
 		let cfg = host.getSettings?.() ?? {};
@@ -308,6 +361,26 @@ export default {
 		/** undici 全局 dispatcher 是否已配置（null = 未尝试）。 */
 		let dispatcherReady = null;
 		let lastState = { kind: "loading", at: Date.now(), statusBar: true };
+		/** 宿主是否支持官方 bottombar 槽位（manifest.ui 里申报了 codex-usage:bar）。 */
+		const slotBarSupported = typeof host.ui?.update === "function";
+
+		/** 把摘要写进官方 bottombar 槽位（0.90.0+）。失败只记日志，不影响主流程。 */
+		function syncBarSlot(state) {
+			if (!slotBarSupported) return;
+			try {
+				const text = barText(state);
+				host.ui.update("bar", {
+					// 只设 label：宿主对 kind=badge 的条目会把 badge 再渲染成一个嵌套 span，
+					// 两个字段同时给同一串字就会显示两遍。
+					label: text,
+					badge: "",
+					hint: barHint(state),
+					hidden: state.statusBar === false,
+				});
+			} catch (err) {
+				host.log?.("bottombar 更新失败：", String(err?.message ?? err));
+			}
+		}
 
 		/** 统一附加客户端需要的设置项（状态栏注入开关等），再广播。 */
 		function push(state) {
@@ -316,10 +389,14 @@ export default {
 				mode: state.mode ?? cfg.mode,
 				statusBar: cfg.statusBar !== false,
 				hideNativeCost: cfg.hideNativeCost !== false,
+				// 宿主支持官方 bottombar 槽位时，状态栏摘要由宿主渲染（下面 syncBarSlot），
+				// 客户端就不再用 DOM 注入 —— 后者在 0.90.0 会被状态栏溢出裁掉。
+				slotBar: slotBarSupported,
 				serviceProxy: process.env.HTTPS_PROXY || process.env.https_proxy || null,
 				dispatcherReady,
 				refreshSec: Math.min(Math.max(Number(cfg.refreshSec) || 60, 15), 3600),
 			};
+			syncBarSlot(lastState);
 			host.broadcast({ state: lastState });
 		}
 

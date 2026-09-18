@@ -4,14 +4,35 @@
 	"icon": "⚡",
 	"version": "1.0.0",
 	"description": "订阅额度 / 成本显示：ChatGPT(Codex) 订阅显示 5h 与每周窗口用量、重置倒计时、可用 reset 次数；非订阅模型显示人民币成本（实时汇率）",
-	"permissions": ["http"],
+	"permissions": [
+		"http",
+		"ui"
+	],
+	"ui": {
+		"bottombar": [
+			{
+				"id": "bar",
+				"label": "⚡ …",
+				"labelEn": "⚡ …",
+				"kind": "badge",
+				"order": 11,
+				"group": "usage",
+				"hint": "订阅额度 / 成本（悬停看详情；细节在 ⚡ 额度 页）",
+				"hintEn": "Codex quota / cost"
+			}
+		]
+	},
 	"settings": [
 		{
 			"key": "mode",
 			"type": "select",
 			"label": "显示模式",
 			"default": "auto",
-			"options": ["auto", "codex", "cost"],
+			"options": [
+				"auto",
+				"codex",
+				"cost"
+			],
 			"hint": "auto=按当前会话模型自动判断（Codex 订阅走额度，其余走人民币成本）"
 		},
 		{
@@ -19,7 +40,10 @@
 			"type": "select",
 			"label": "汇率来源",
 			"default": "live",
-			"options": ["live", "fixed"],
+			"options": [
+				"live",
+				"fixed"
+			],
 			"hint": "live=每天抓取 open.er-api.com；fixed=用下面的固定汇率"
 		},
 		{

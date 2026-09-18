@@ -228,6 +228,14 @@ export default {
 		}
 
 		function syncBar() {
+			// 宿主支持官方 bottombar 槽位（state.slotBar）时，摘要由宿主渲染：
+			// 0.90.0 把状态栏改成溢出容器后，插件自己插的节点会被挤到不可见区，
+			// 这里就不再注入，只保留「隐藏原生成本项」这一件事。
+			if (state?.slotBar) {
+				removeBar();
+				syncNativeCost();
+				return;
+			}
 			if (!state?.statusBar) {
 				removeBar();
 				syncNativeCost();

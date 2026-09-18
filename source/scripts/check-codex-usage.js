@@ -148,8 +148,27 @@ async function main() {
 		return JSON.stringify({
 			pluginTab: [...document.querySelectorAll('.plugin-tab')].map(n => n.innerText.replace(/\\n/g, ' ')),
 			statusBarSummary: document.getElementById('codex-usage-statusbar')?.textContent ?? null,
+			// 官方 bottombar 槽位渲染出来的条目（0.90.0+）：宿主把 badge 类条目渲染成
+			// <button class="status-action">，靠 title 里的中文描述认出来。
+			slotBar: (() => {
+				const btn = [...document.querySelectorAll('.statusbar .status-action')]
+					.find(n => /订阅额度|按量成本|Codex 订阅/.test(n.getAttribute('title') || ''));
+				return btn ? { text: (btn.innerText || '').trim(), title: btn.getAttribute('title') || '' } : null;
+			})(),
 			nativeCostHidden: costItem ? costItem.style.display === 'none' : null,
-			meta: document.querySelector('.cu-meta')?.innerText ?? null
+			// 状态栏实际子节点（排查「条目看不见 / 显示两次」时最直接）：
+			// 0.90.0 起插件应走官方 bottombar 槽位，这里能看到它的 data-item-id。
+			barItems: [...document.querySelectorAll('.statusbar > *')].map(n => ({
+				tag: n.tagName.toLowerCase(),
+				id: n.id || null,
+				itemId: n.getAttribute('data-item-id') || n.dataset?.itemId || null,
+				cls: (n.className || '').toString().slice(0, 40),
+				text: (n.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+				visible: !!(n.offsetWidth || n.offsetHeight),
+				costTitle: n.getAttribute('title') || null
+			})),
+			meta: document.querySelector('.cu-meta')?.innerText ?? null,
+			barHtml: (document.querySelector('.statusbar')?.innerHTML ?? '').slice(0, 2200)
 		});
 	})()`;
 	const res = await send("Runtime.evaluate", { expression: probe, awaitPromise: true, returnByValue: true });
@@ -160,10 +179,24 @@ async function main() {
 		console.log("✗ 页面探测失败");
 	} else {
 		console.log("插件 tab：", data.pluginTab.join(" / ") || "（未出现）");
-		console.log("状态栏摘要：", data.statusBarSummary ?? "（未注入）");
+		console.log("状态栏摘要：", data.statusBarSummary ?? (data.slotBar ? data.slotBar.text + "（官方 bottombar 槽位）" : "（未注入）"));
+		if (data.slotBar) console.log("  悬停提示：", data.slotBar.title);
 		console.log("原生成本项已隐藏：", data.nativeCostHidden);
 		console.log("插件元数据：\n" + (data.meta ?? "（读不到）").split("\n").map((l) => "  " + l).join("\n"));
-		const ok = Boolean(data.statusBarSummary) && data.pluginTab.length > 0;
+		if (Array.isArray(data.barItems)) {
+			console.log("状态栏子节点 " + data.barItems.length + " 个：");
+			for (const b of data.barItems) {
+				console.log(
+					"  " + (b.visible ? "可见" : "隐藏") + "  <" + b.tag + (b.id ? " id=" + b.id : "") + (b.itemId ? " item=" + b.itemId : "") + ">" +
+						"  text=\"" + b.text + "\"" + (b.costTitle ? "  title=\"" + b.costTitle.slice(0, 30) + "\"" : ""),
+				);
+			}
+		}
+		if (data.barHtml) {
+			console.log("状态栏 HTML：");
+			for (const line of data.barHtml.replace(/></g, ">\n<").split("\n")) console.log("  " + line);
+		}
+		const ok = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0;
 		console.log(ok ? "\n✓ 插件工作正常" : "\n✗ 插件未生效（看上面的空项）");
 	}
 
