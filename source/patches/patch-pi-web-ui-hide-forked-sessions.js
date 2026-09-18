@@ -23,8 +23,12 @@ const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 const target = locateWebUiFile("dist", "server", "agent-service.js");
 const marker = "hide-forked-sessions";
 
+// 锚点必须连 `const sessions = new Map();` 与紧跟的循环一起写：0.90.0 起
+// `for (const s of infos) {` 在会话搜索里也会出现（搜索必须保留全部会话，不能去重），
+// 单独拿循环行当锚点会命中两处。
 const listNeedle = `            const infos = await this.loadSessionInfos();
-            const sessions = new Map();`;
+            const sessions = new Map();
+            for (const s of infos) {`;
 const listReplacement = `            const infos = await this.loadSessionInfos();
             // ${marker}: 只保留 fork 链的链尾。列表里的 info.parentSessionPath 就是
             // header.parentSession（SDK 已解析），只要它指向列表中的某个会话，那个会话
@@ -43,12 +47,10 @@ const listReplacement = `            const infos = await this.loadSessionInfos()
                     return kept.length > 0 ? kept : infos;
                 })()
                 : infos;
-            const sessions = new Map();`;
+            const sessions = new Map();
+            for (const s of visibleInfos) {`;
 
-const loopNeedle = `            for (const s of infos) {`;
-const loopReplacement = `            for (const s of visibleInfos) {`;
-
-/** 出现次数必须恰好为 1：两处以上说明锚点太宽（0.86.2 里 searchSessions() 也调 loadSessionInfos）。 */
+/** 出现次数必须恰好为 1：两处以上说明锚点太宽（0.90.0 里 searchSessions() 也遍历 infos）。 */
 function countOf(source, needle) {
 	let n = 0;
 	let i = source.indexOf(needle);
@@ -68,10 +70,10 @@ if (source.includes(marker)) {
 	console.log("✓ 隐藏 fork 父会话补丁已存在");
 	process.exit(0);
 }
-if (countOf(source, listNeedle) !== 1 || countOf(source, loopNeedle) !== 1) {
+if (countOf(source, listNeedle) !== 1) {
 	console.error("✗ pi-web-ui 版本的目标代码已变化，未应用 hide-forked-sessions 补丁");
 	process.exit(2);
 }
-source = source.replace(listNeedle, listReplacement).replace(loopNeedle, loopReplacement);
+source = source.replace(listNeedle, listReplacement);
 fs.writeFileSync(target, source, "utf8");
 console.log("✓ 已应用 hide-forked-sessions 补丁");

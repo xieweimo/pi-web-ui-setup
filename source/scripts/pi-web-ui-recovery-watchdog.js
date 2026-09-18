@@ -80,9 +80,16 @@ function stopWeb() {
 }
 function startWeb() {
   if (!fs.existsSync(shim)) throw new Error(`找不到 pi-web-ui 启动命令：${shim}`);
-  const quote = value => `"${String(value).replace(/"/g, '\\"')}"`;
-  const command = `${quote(shim)} --no-browser --cwd ${quote(cwd)}`;
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], { detached: true, stdio: 'ignore', env: envForWeb() });
+  // 不再通过 cmd.exe 转调 npm 生成的 .cmd。带空格路径在 /s /c 的双层引号规则下
+  // 会被 cmd 提前吞掉，表现为 /restart 返回 202，但 8787 始终没有进程监听。
+  // watchdog 本身就是由正确的 Node（系统版或便携版）启动，直接执行包入口最可靠。
+  const entry = path.join(path.dirname(shim), 'node_modules', 'pi-web-ui', 'bin', 'pi-web-ui.mjs');
+  if (!fs.existsSync(entry)) throw new Error(`找不到 pi-web-ui 程序入口：${entry}`);
+  const child = spawn(process.execPath, [entry, '--no-browser', '--cwd', cwd], {
+    detached: true,
+    stdio: 'ignore',
+    env: envForWeb(),
+  });
   child.unref();
 }
 function reply(res, code, body) {

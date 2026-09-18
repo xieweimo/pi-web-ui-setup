@@ -1,0 +1,4 @@
+{
+  "NO_PROXY": "localhost,127.0.0.1,::1,api.deepseek.com",
+  "说明": "DeepSeek API 直连；其他未列出的服务继续使用 PI 的 httpProxy。"
+}
