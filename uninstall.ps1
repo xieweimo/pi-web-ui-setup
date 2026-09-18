@@ -27,15 +27,21 @@ foreach ($f in @('node-portable.zip', 'node-portable-extract', 'PiWebUI-Setup.zi
   if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "removed temp $f" }
 }
 
-# 4. desktop shortcut (the installer recreates it)
+# 4. desktop files created by the installer
 $desktop = [Environment]::GetFolderPath('Desktop')
 if (-not $desktop) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }
 $lnk = Join-Path $desktop 'Pi Web UI.lnk'
 if (Test-Path $lnk) { Remove-Item $lnk -Force -ErrorAction SilentlyContinue; Write-Host 'removed desktop shortcut' }
+# Keep this file ASCII-only because uninstall.ps1 is fetched through irm | iex.
+$checklistName = [string]::Concat(([char]0x88C5), ([char]0x5B8C), ([char]0x4E4B), ([char]0x540E), ([char]0x8981), ([char]0x505A), ([char]0x7684), ([char]0x4E8B)) + '.txt'
+$checklist = Join-Path $desktop $checklistName
+if (Test-Path $checklist) { Remove-Item $checklist -Force -ErrorAction SilentlyContinue; Write-Host 'removed installer checklist' }
 
-# 5. pi-web-ui plugin deployed into the data dir
-$plugin = Join-Path $env:USERPROFILE '.pi-web\plugins\codex-usage'
-if (Test-Path $plugin) { Remove-Item $plugin -Recurse -Force -ErrorAction SilentlyContinue; Write-Host 'removed codex-usage plugin copy' }
+# 5. pi-web-ui plugins deployed by this installer into the data dir
+foreach ($id in @('codex-usage', 'piwork-tools', 'quick-ask')) {
+  $plugin = Join-Path $env:USERPROFILE ('.pi-web\plugins\' + $id)
+  if (Test-Path $plugin) { Remove-Item $plugin -Recurse -Force -ErrorAction SilentlyContinue; Write-Host ('removed plugin copy: ' + $id) }
+}
 
 # 6. settings.json written by the OLD installer may contain a BOM, which makes pi fail
 #    with "Failed to parse settings file". Report it here; the installer rewrites the file
