@@ -14,6 +14,13 @@ const norm = (v) => String(v).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCas
 const target = norm(exact);
 
 const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+// 全局永久名单：不依赖浏览器 clientId。服务端补丁会在 remember()/会话扫描/
+// 当前 cwd 强插入这三条路径上都读取它，故重开项目也不会复活到最近项目。
+const GLOBAL_KEY = '__piweb_global__';
+const globalState = (state[GLOBAL_KEY] ??= {});
+const permanent = new Set(globalState.permanentRemovedProjects ?? []);
+permanent.add(exact);
+globalState.permanentRemovedProjects = [...permanent];
 const report = [];
 
 for (const [key, value] of Object.entries(state)) {
@@ -45,4 +52,4 @@ fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8');
 fs.renameSync(tmp, stateFile);
 
 console.log(report.length ? report.join('\n') : 'projects 数组里本就没有该条目');
-console.log('已写入精确墓碑: ' + exact);
+console.log('已写入全局永久忽略名单: ' + exact);

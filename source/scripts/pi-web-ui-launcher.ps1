@@ -69,9 +69,10 @@ $usageCostPatch = Join-Path $cwd 'patches\patch-pi-web-ui-usage-cost.js'
 $liveModelPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-live-model.js'
 $recoveryUiPatch = Join-Path $cwd 'patches\patch-pi-web-ui-recovery-ui.js'
 $hideForkedPatch = Join-Path $cwd 'patches\patch-pi-web-ui-hide-forked-sessions.js'
+$permanentProjectIgnorePatch = Join-Path $cwd 'patches\patch-pi-web-ui-permanent-project-ignore.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $stopButtonPatch = Join-Path $cwd 'patches\apply-stop-button.ps1'
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $recoveryUiPatch, $hideForkedPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $recoveryUiPatch, $hideForkedPatch, $permanentProjectIgnorePatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
 }
 # 停止按钮样式属于静态网页资源；npm 升级覆盖后启动时幂等恢复。
