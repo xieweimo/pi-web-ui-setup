@@ -20,13 +20,19 @@ $u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/install.ps1?
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/install.ps1?t='+(Get-Random); try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy; $s=irm $u}; iex $s"
 ```
 
-或直接运行本仓库的 `install.cmd`。
+若 `raw.githubusercontent.com` 连不上，改用 jsDelivr 镜像：
+
+```powershell
+$u='https://cdn.jsdelivr.net/gh/xieweimo/pi-web-ui-setup@main/install.ps1?t='+(Get-Random);try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy;$s=irm $u};iex $s
+```
+
+或直接运行本仓库的 `install.cmd`（会自动尝试 jsDelivr）。
 
 装完桌面出现 **Pi Web UI** 快捷方式，双击即可使用。开头会打印 `pi-web-ui-setup vYYYY-MM-DD.n` 版本号。
 
 ## 安装器会做什么
 
-1. 检查 Node.js 22+；没有就装便携版到 `%USERPROFILE%\PiWebUI\node`（免管理员），镜像依次尝试 nodejs.org / npmmirror / 清华。
+1. 安装或复用隔离的便携 Node.js 22+ 到 `%USERPROFILE%\PiWebUI\node`（免管理员，不会改动系统 Node/npm），镜像依次尝试 nodejs.org / npmmirror / 清华。
 2. 安装固定版本 `pi 0.85.1` + `pi-web-ui 0.86.2`：依赖走国内镜像，镜像缺的包单独从官方 tarball 拉取。
 3. 写入 `install.json`（记录便携 Node 与启动命令位置；补丁和启动器靠它定位）。
 4. 解压定制包并应用补丁（按版本 profile 校验，版本不匹配就跳过，不盲改）。
@@ -41,9 +47,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubus
 
 ```
 source/
-├── projects/                       ← 两个界面插件（完整源码）
+├── projects/                       ← 三个界面插件（完整源码）
 │   ├── codex-usage-plugin/         ChatGPT 订阅额度 + 人民币成本
-│   └── piwork-tools-plugin/        顶栏 ⤴同步 + 🛠PIwork
+│   ├── piwork-tools-plugin/        顶栏 ⤴同步 + 🛠PIwork
+│   └── quick-ask-plugin/           💬 临时问问
 ├── patches/                        ← pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁
 ├── configs/                        ← pi 设置模板、全局 AGENTS.md、模型库、版本档案
 ├── scripts/                        ← 启动器、断连守护、插件安装器、打包与同步脚本
@@ -55,6 +62,7 @@ source/
 |---|---|
 | `source/projects/codex-usage-plugin/` | 界面插件：ChatGPT 订阅额度 + 人民币成本（服务端入口 + 客户端视图 + 声明式设置） |
 | `source/projects/piwork-tools-plugin/` | 界面插件：顶栏 `⤴同步`（打包→推送→校验）+ `🛠PIwork` 状态视图 |
+| `source/projects/quick-ask-plugin/` | 界面插件：`💬 临时问问`独立临时问答面板 |
 | `source/patches/` | pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁 |
 | `source/configs/` | pi 设置模板、全局 AGENTS.md、模型库、版本档案（`pi-web-ui-profiles/`） |
 | `source/scripts/` | 启动器、断连守护、插件安装器、打包与同步脚本 |
@@ -67,7 +75,7 @@ source/
 pi-web-ui install https://github.com/xieweimo/pi-web-ui-setup/tree/main/source/projects/piwork-tools-plugin --force
 ```
 
-（一键安装已自动装好这两个插件，这条命令只在别处补装时用。）
+（一键安装已自动装好三个插件，这条命令只在别处补装时用。）
 
 ## 不会做什么
 
@@ -85,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-aiwork.ps1
 
 ## 清理旧的失败安装
 
-如果之前装失败过，先清一次再装（会删除 `%USERPROFILE%\PiWebUI`、临时文件、桌面快捷方式，并修掉旧版写坏的 BOM）：
+如果之前装失败过，先清一次再装（只会删除 `%USERPROFILE%\PiWebUI`、临时文件和它创建的 `Pi Web UI` 桌面快捷方式；不会停止宿主机服务，也不会删除 `~/.pi`、`~/.pi-web` 的共享配置/插件）：
 
 ```powershell
 $u='https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main/uninstall.ps1?t='+(Get-Random);try{$s=irm $u}catch{[Net.WebRequest]::DefaultWebProxy=New-Object Net.WebProxy;$s=irm $u};iex $s

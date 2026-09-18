@@ -4,7 +4,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # NOTE: keep this file ASCII-only. Windows PowerShell 5.1 decodes .ps1 files without a
 # BOM as ANSI/GBK, so non-ASCII comments break parsing. Explanations live in README.md.
 
-$setupVersion = 'v2026-09-13.1'
+$setupVersion = 'v2026-09-18.1'
 $pkgVersion  = 'pi-0.85.1_web-0.86.2'
 $zipName     = "PiWebUI-Setup_$pkgVersion.zip"
 $nodeVersion = if ($env:PI_SETUP_NODE_VERSION) { $env:PI_SETUP_NODE_VERSION } else { 'v22.23.2' }
@@ -93,17 +93,11 @@ function Test-RegistryHasPackage {
 
 Write-Host "=== pi-web-ui-setup $setupVersion : custom pi-web-ui (Codex quota + RMB cost + recovery button) ===" -ForegroundColor Cyan
 
-# --- 1. Node.js: use system 22+, otherwise install a portable copy (no admin rights) ---
-$nodeOk = $false
-if (Get-Command node -ErrorAction SilentlyContinue) {
-  try {
-    $major = [int]((node -v) -replace '^v', '').Split('.')[0]
-    if ($major -ge 22) { $nodeOk = $true; Write-Host "Found system Node.js $(node -v)" }
-    else { Write-Host "System Node.js $(node -v) is too old (need 22+); using portable Node.js." -ForegroundColor Yellow }
-  } catch { }
-}
-if (-not $nodeOk -and (Test-Path (Join-Path $nodeDir 'node.exe'))) {
-  $nodeOk = $true
+# --- 1. Node.js: always use an isolated portable copy (no admin rights) ---
+# Do not use a machine-wide npm prefix: this installer must not update an existing
+# host pi/pi-web-ui installation.
+$nodeOk = Test-Path (Join-Path $nodeDir 'node.exe')
+if ($nodeOk) {
   Write-Host 'Reusing portable Node.js already installed.'
 }
 if (-not $nodeOk) {

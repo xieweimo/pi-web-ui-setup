@@ -11,6 +11,10 @@ if not "%ERRORLEVEL%"=="0" (
   echo Retrying without the system proxy...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy } catch {}; %BOOT%"
 )
+if not "%ERRORLEVEL%"=="0" (
+  echo Retrying via jsDelivr mirror...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://cdn.jsdelivr.net/gh/xieweimo/pi-web-ui-setup@main/install.ps1?t=' + (Get-Random); iex (irm $u)"
+)
 set RC=%ERRORLEVEL%
 if not "%RC%"=="0" (
   echo.

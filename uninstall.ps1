@@ -5,15 +5,22 @@ $ErrorActionPreference = 'Continue'
 
 Write-Host '=== pi-web-ui cleanup ==='
 
-# 1. stop leftover service / recovery watchdog
-foreach ($port in 8787, 8788) {
-  Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-    ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+# Only stop processes launched by this portable installation. Never kill a host pi-web-ui
+# merely because it happens to use the same localhost ports.
+$root = Join-Path $env:USERPROFILE 'PiWebUI'
+$portableNode = Join-Path $root 'node\node.exe'
+if (Test-Path $portableNode) {
+  foreach ($port in 8787, 8788) {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+      $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+      if ($proc -and $proc.Path -and $proc.Path.Equals($portableNode, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
 }
-Write-Host 'stopped leftover service/watchdog (if any)'
 
 # 2. install directory (portable node + applied patches + install.json)
-$root = Join-Path $env:USERPROFILE 'PiWebUI'
 if (Test-Path $root) {
   Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
   Write-Host "removed $root"
@@ -32,11 +39,8 @@ $desktop = [Environment]::GetFolderPath('Desktop')
 if (-not $desktop) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }
 $lnk = Join-Path $desktop 'Pi Web UI.lnk'
 if (Test-Path $lnk) { Remove-Item $lnk -Force -ErrorAction SilentlyContinue; Write-Host 'removed desktop shortcut' }
-# 5. pi-web-ui plugins deployed by this installer into the data dir
-foreach ($id in @('codex-usage', 'piwork-tools', 'quick-ask')) {
-  $plugin = Join-Path $env:USERPROFILE ('.pi-web\plugins\' + $id)
-  if (Test-Path $plugin) { Remove-Item $plugin -Recurse -Force -ErrorAction SilentlyContinue; Write-Host ('removed plugin copy: ' + $id) }
-}
+# 5. Shared ~/.pi-web plugins and ~/.pi settings are intentionally preserved.
+# They may belong to a host installation or contain user configuration.
 
 # 6. settings.json written by the OLD installer may contain a BOM, which makes pi fail
 #    with "Failed to parse settings file". Report it here; the installer rewrites the file
