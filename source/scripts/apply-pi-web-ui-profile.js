@@ -3,10 +3,22 @@
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const os = require('os');
+const { findWebUiRoot } = require('./pi-web-ui-locate');
 const root = path.resolve(__dirname, '..');
-const npmRoot = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-const pkg = (name) => JSON.parse(fs.readFileSync(path.join(npmRoot, 'npm', 'node_modules', name, 'package.json'), 'utf8')).version;
+const webRoot = findWebUiRoot();
+if (!webRoot) {
+  console.error('找不到 pi-web-ui 安装目录：请确认已完成安装，或检查 install.json。');
+  process.exit(2);
+}
+const modulesRoot = path.dirname(webRoot);
+const pkg = (name) => {
+  const file = path.join(modulesRoot, name, 'package.json');
+  if (!fs.existsSync(file)) {
+    console.error(`找不到 ${name} 的 package.json：${file}`);
+    process.exit(2);
+  }
+  return JSON.parse(fs.readFileSync(file, 'utf8')).version;
+};
 const pi = pkg('@earendil-works/pi-coding-agent');
 const web = pkg('pi-web-ui');
 const dir = path.join(root, 'configs', 'pi-web-ui-profiles');

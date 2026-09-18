@@ -7,8 +7,18 @@ const os = require('os');
 const PORT = 8788;
 const WEB_PORT = 8787;
 const cwd = path.resolve(__dirname, '..');
-const shim = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'pi-web-ui.cmd');
 const settingsFile = path.join(os.homedir(), '.pi', 'agent', 'settings.json');
+
+/** 与 launcher 保持一致：便携安装优先使用 install.json 记录的真实 shim。 */
+function resolveShim() {
+  let shim = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'pi-web-ui.cmd');
+  try {
+    const install = JSON.parse(fs.readFileSync(path.join(cwd, 'install.json'), 'utf8'));
+    if (install.shim && fs.existsSync(install.shim)) shim = install.shim;
+  } catch {}
+  return shim;
+}
+const shim = resolveShim();
 let restarting = false;
 
 /** Windows 系统代理（WinINET）：pi settings.json 里的 httpProxy 丢了之后的兜底。 */
@@ -40,6 +50,10 @@ function systemProxy() {
 function envForWeb() {
   const env = { ...process.env };
   try {
+    const install = JSON.parse(fs.readFileSync(path.join(cwd, 'install.json'), 'utf8'));
+    if (install.nodeDir && fs.existsSync(install.nodeDir)) env.PATH = `${install.nodeDir};${env.PATH || ''}`;
+  } catch {}
+  try {
     let proxy = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).httpProxy;
     if (!proxy) proxy = systemProxy();
     if (proxy) {
@@ -65,8 +79,10 @@ function stopWeb() {
   } catch {}
 }
 function startWeb() {
-  if (!fs.existsSync(shim)) throw new Error('pi-web-ui.cmd not found');
-  const child = spawn('cmd.exe', ['/c', shim, '--no-browser', '--cwd', cwd], { detached: true, stdio: 'ignore', env: envForWeb() });
+  if (!fs.existsSync(shim)) throw new Error(`找不到 pi-web-ui 启动命令：${shim}`);
+  const quote = value => `"${String(value).replace(/"/g, '\\"')}"`;
+  const command = `${quote(shim)} --no-browser --cwd ${quote(cwd)}`;
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], { detached: true, stdio: 'ignore', env: envForWeb() });
   child.unref();
 }
 function reply(res, code, body) {
