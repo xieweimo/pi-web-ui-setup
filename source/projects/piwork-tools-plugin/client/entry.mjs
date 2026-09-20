@@ -81,6 +81,14 @@ function statusText(s) {
 	return `上次同步失败（退出码 ${s.exitCode}，${fmtTime(s.finishedAt)}）`;
 }
 
+function changeLabel(status) {
+	if (status.includes("A") || status === "??") return "新增";
+	if (status.includes("D")) return "删除";
+	if (status.includes("R")) return "重命名";
+	if (status.includes("C")) return "复制";
+	return "修改";
+}
+
 function statusClass(s) {
 	if (!s) return "";
 	if (s.running) return "run";
@@ -171,6 +179,13 @@ function injectStyle(doc) {
 .pt button[disabled]{opacity:.5;cursor:default}
 .pt .pt-hint{opacity:.6;margin:2px 0 12px}
 .pt .pt-meta{font-size:11.5px;opacity:.65;margin-bottom:10px;display:grid;gap:2px;word-break:break-all}
+.pt .pt-changes{border:1px solid var(--border,#333);border-radius:8px;margin:0 0 10px;padding:9px 12px;background:var(--bg-elev1,rgba(255,255,255,.02))}
+.pt .pt-changes-title{font-weight:600;margin-bottom:5px}
+.pt .pt-change-list{display:grid;gap:3px;max-height:180px;overflow:auto}
+.pt .pt-change{display:flex;align-items:baseline;gap:8px;min-width:0}
+.pt .pt-change-kind{flex:none;min-width:42px;color:var(--accent,#8b7cff);font-size:11.5px}
+.pt .pt-change-path{font-family:var(--mono,ui-monospace,monospace);font-size:11.5px;word-break:break-all}
+.pt .pt-change-empty{opacity:.6;font-size:12px}
 .pt pre{max-height:46vh;overflow:auto;border:1px solid var(--border,#333);border-radius:8px;padding:10px 12px;background:var(--bg-elev1,rgba(255,255,255,.02));font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-all;margin:0}
 `;
 	doc.head.appendChild(el);
@@ -192,6 +207,10 @@ export default {
 		<div class="pt-root"></div>
 		<div class="pt-cmd"></div>
 	</div>
+	<section class="pt-changes">
+		<div class="pt-changes-title">本次同步改动</div>
+		<div class="pt-change-list"><div class="pt-change-empty">尚未开始同步</div></div>
+	</section>
 	<pre class="pt-out">（还没有输出）</pre>
 </div>`;
 
@@ -199,6 +218,7 @@ export default {
 		const statusTextEl = container.querySelector(".pt-status-text");
 		const rootEl = container.querySelector(".pt-root");
 		const cmdEl = container.querySelector(".pt-cmd");
+		const changesEl = container.querySelector(".pt-change-list");
 		const outEl = container.querySelector(".pt-out");
 		const btn = container.querySelector(".pt-sync");
 
@@ -213,6 +233,29 @@ export default {
 					: `仓库根：未配置${state.candidates?.length ? `（试过：${state.candidates.join("、")}）` : ""}`;
 			}
 			if (cmdEl) cmdEl.textContent = `脚本：${state.script ?? ""}`;
+			if (changesEl) {
+				const changes = Array.isArray(state.changes) ? state.changes : [];
+				changesEl.replaceChildren();
+				if (!changes.length) {
+					const empty = doc.createElement("div");
+					empty.className = "pt-change-empty";
+					empty.textContent = state.startedAt ? "本次没有需要提交的文件改动" : "尚未开始同步";
+					changesEl.appendChild(empty);
+				} else {
+					for (const change of changes) {
+						const row = doc.createElement("div");
+						row.className = "pt-change";
+						const kind = doc.createElement("span");
+						kind.className = "pt-change-kind";
+						kind.textContent = changeLabel(String(change.status ?? ""));
+						const path = doc.createElement("span");
+						path.className = "pt-change-path";
+						path.textContent = String(change.path ?? "");
+						row.append(kind, path);
+						changesEl.appendChild(row);
+					}
+				}
+			}
 			if (outEl) outEl.textContent = state.lines?.length ? state.lines.join("\n") : "（还没有输出）";
 			if (btn) btn.disabled = Boolean(state.running);
 		}

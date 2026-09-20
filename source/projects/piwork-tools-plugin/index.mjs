@@ -15,7 +15,7 @@
  * 三者都拿不到（或脚本不在）时，接口返回明确错误，前端照原样显示。
  */
 import { existsSync, readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +36,7 @@ const job = {
 	exitCode: null,
 	error: null,
 	lines: [],
+	changes: [],
 };
 /** 正在跑的对话轮次计数（run_start / run_end 配对）。 */
 let activeRuns = 0;
@@ -77,6 +78,24 @@ function psQuote(value) {
 	return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function captureChanges(root) {
+	try {
+		const output = execFileSync("git", ["-C", root, "status", "--short", "--untracked-files=all"], {
+			encoding: "utf8",
+			windowsHide: true,
+			timeout: 15_000,
+		});
+		return output
+			.replace(/\r/g, "")
+			.split("\n")
+			.filter(Boolean)
+			.slice(0, 100)
+			.map((line) => ({ status: line.slice(0, 2).trim() || "M", path: line.slice(3).trim() }));
+	} catch {
+		return [];
+	}
+}
+
 function pushLines(chunk) {
 	// 子进程已被显式切到 UTF-8；这里按 UTF-8 解码，避免 Windows PowerShell
 	// 默认 OEM/系统代码页导致中文被 Node 当成 UTF-8 后显示为乱码。
@@ -97,6 +116,7 @@ function snapshot(host) {
 		exitCode: job.exitCode,
 		error: job.error,
 		lines: job.lines.slice(-TAIL_LINES),
+		changes: job.changes,
 		root: resolveRoot(host),
 		candidates: rootCandidates(host),
 		script: SCRIPT_REL,
@@ -146,6 +166,8 @@ function startJob(host) {
 	job.exitCode = null;
 	job.error = null;
 	job.lines = [];
+	// 必须在脚本提交前快照；同步完成后工作区变干净，再查就无法说明本次推送了什么。
+	job.changes = captureChanges(root);
 	try {
 		const script = join(root, SCRIPT_REL);
 		// Windows PowerShell 5.1 在重定向 stdout 时默认不保证 UTF-8。先显式设置
