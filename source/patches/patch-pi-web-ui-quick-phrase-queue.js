@@ -38,28 +38,45 @@ if (source.includes(marker)) {
 	process.exit(0);
 }
 
-/** 发送函数：把 queue 参数带进 prompt 消息。 */
-const sendNeedle =
-	"se=y=>{const ae=y.trim();if(ae){if(!Se){w(\"error\",J(\"netDisconnected\"));return}if(Z({type:\"prompt\",text:ae,attachments:Mt()})){ae&&Bl(ae),";
-const sendReplacement =
-	"se=(y,fq=false)=>{const ae=y.trim();if(ae){if(!Se){w(\"error\",J(\"netDisconnected\"));return}if(Z({type:\"prompt\",text:ae,queue:fq,attachments:Mt()})){ae&&Bl(ae),";
-
-/** 快捷短语按钮：右侧补一个 ⏳（排队）。 */
-const chipNeedle =
-	"children:F.map(y=>s.jsx(\"button\",{type:\"button\",className:\"quick-chip\",title:J(\"quickPhrasesTip\",{text:y}),disabled:!Se,onClick:()=>se(y),children:y},y))";
-const chipReplacement =
-	"children:F.map(y=>s.jsxs(\"span\",{className:\"" +
-	marker +
-	"\",style:{display:\"inline-flex\",alignItems:\"center\",gap:\"2px\"},children:[s.jsx(\"button\",{type:\"button\",className:\"quick-chip\",title:J(\"quickPhrasesTip\",{text:y}),disabled:!Se,onClick:()=>se(y),children:y},\"c\"),s.jsx(\"button\",{type:\"button\",className:\"quick-chip quick-chip-queue\",style:{padding:\"0 6px\",fontSize:\"11px\",opacity:.75},title:\"排队发送：AI 回答完全结束后再发，不打断当前回合\",disabled:!Se,onClick:()=>se(y,!0),children:\"⏳\"},\"q\")]},y))";
+/**
+ * 不同 pi-web-ui 版本的压缩变量名会变化。每个版本保留一组精确锚点，
+ * 只允许唯一命中，避免模糊替换误伤别处的 prompt 发送逻辑。
+ */
+const variants = [
+	{
+		name: "0.90.x",
+		sendNeedle:
+			"se=y=>{const ae=y.trim();if(ae){if(!Se){w(\"error\",J(\"netDisconnected\"));return}if(Z({type:\"prompt\",text:ae,attachments:Mt()})){ae&&Bl(ae),",
+		sendReplacement:
+			"se=(y,fq=false)=>{const ae=y.trim();if(ae){if(!Se){w(\"error\",J(\"netDisconnected\"));return}if(Z({type:\"prompt\",text:ae,queue:fq,attachments:Mt()})){ae&&Bl(ae),",
+		chipNeedle:
+			"children:F.map(y=>s.jsx(\"button\",{type:\"button\",className:\"quick-chip\",title:J(\"quickPhrasesTip\",{text:y}),disabled:!Se,onClick:()=>se(y),children:y},y))",
+		chipReplacement:
+			"children:F.map(y=>s.jsxs(\"span\",{className:\"" + marker + "\",style:{display:\"inline-flex\",alignItems:\"center\",gap:\"2px\"},children:[s.jsx(\"button\",{type:\"button\",className:\"quick-chip\",title:J(\"quickPhrasesTip\",{text:y}),disabled:!Se,onClick:()=>se(y),children:y},\"c\"),s.jsx(\"button\",{type:\"button\",className:\"quick-chip quick-chip-queue\",style:{padding:\"0 6px\",fontSize:\"11px\",opacity:.75},title:\"排队发送：AI 回答完全结束后再发，不打断当前回合\",disabled:!Se,onClick:()=>se(y,!0),children:\"⏳\"},\"q\")]},y))",
+	},
+	{
+		name: "0.92.x",
+		sendNeedle:
+			"tt=e=>{let t=e.trim();if(t){if(!Ye){m(`error`,F(`netDisconnected`));return}if($({type:`prompt`,text:t,attachments:$e()})){t&&Nd(t),",
+		sendReplacement:
+			"tt=(e,qq=false)=>{let t=e.trim();if(t){if(!Ye){m(`error`,F(`netDisconnected`));return}if($({type:`prompt`,text:t,queue:qq,attachments:$e()})){t&&Nd(t),",
+		chipNeedle:
+			"children:y.map(e=>(0,X.jsx)(`button`,{type:`button`,className:`quick-chip`,title:F(`quickPhrasesTip`,{text:e}),disabled:!Ye,onClick:()=>tt(e),children:e},e))",
+		chipReplacement:
+			"children:y.map(e=>(0,X.jsxs)(`span`,{className:`" + marker + "`,style:{display:`inline-flex`,alignItems:`center`,gap:`2px`},children:[(0,X.jsx)(`button`,{type:`button`,className:`quick-chip`,title:F(`quickPhrasesTip`,{text:e}),disabled:!Ye,onClick:()=>tt(e),children:e},`c`),(0,X.jsx)(`button`,{type:`button`,className:`quick-chip quick-chip-queue`,style:{padding:`0 6px`,fontSize:`11px`,opacity:.75},title:`排队发送：AI 回答完全结束后再发，不打断当前回合`,disabled:!Ye,onClick:()=>tt(e,!0),children:`⏳`},`q`)]},e))",
+	},
+];
 
 const countOf = (needle) => source.split(needle).length - 1;
-if (countOf(sendNeedle) !== 1 || countOf(chipNeedle) !== 1) {
+const matched = variants.filter((v) => countOf(v.sendNeedle) === 1 && countOf(v.chipNeedle) === 1);
+if (matched.length !== 1) {
 	console.error(
-		`✗ pi-web-ui 版本的目标代码已变化，未应用快捷短语排队补丁（send ${countOf(sendNeedle)} 次 / chip ${countOf(chipNeedle)} 次）`,
+		`✗ pi-web-ui 版本的目标代码已变化，未应用快捷短语排队补丁（匹配版本数 ${matched.length}）`,
 	);
 	process.exit(2);
 }
-source = source.replace(sendNeedle, sendReplacement).replace(chipNeedle, chipReplacement);
+const variant = matched[0];
+source = source.replace(variant.sendNeedle, variant.sendReplacement).replace(variant.chipNeedle, variant.chipReplacement);
 fs.writeFileSync(target, source, "utf8");
 console.log("✓ 已应用快捷短语排队补丁（短语右侧新增 ⏳ 按钮）");
 console.log(`  目标：${target}`);
