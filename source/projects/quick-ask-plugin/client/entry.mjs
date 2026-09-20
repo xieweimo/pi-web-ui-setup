@@ -104,15 +104,27 @@ function open() {
 	root.querySelector(".qa-input").focus();
 }
 function register() {
-	if (registered || !host()?.onUiAction) return;
-	host().onUiAction("open", open); registered = true;
+	if (registered) return;
+	// 让插件继续显示在原生视图 tab 区，但在捕获阶段接管点击并直接打开浮层，
+	// 避免切到一个还要二次点击的中转页面。
+	document.addEventListener("click", (event) => {
+		if (document.getElementById(ROOT_ID)) return;
+		const button = event.target?.closest?.("button");
+		if (!button) return;
+		const text = String(button.textContent ?? "").replace(/\s+/g, " ").trim();
+		if (!text.includes("临时问问") && !text.includes("Quick Ask")) return;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		open();
+	}, true);
+	registered = true;
 }
-register(); setTimeout(register, 0);
+register();
 export default {
 	mount(container) {
-		// mount 会在插件加载时调用，不能在此自动打开浮层；否则页面刷新也会弹出。
-		container.innerHTML = '<div style="padding:20px;font:13px/1.6 system-ui"><h2 style="margin:0 0 8px">💬 临时问问</h2><p style="opacity:.7">独立提问，不读取或写入当前任务会话，也不能修改文件。</p><button type="button" class="qa-open" style="font:inherit;padding:7px 12px;cursor:pointer">打开临时问答</button></div>';
-		container.querySelector(".qa-open")?.addEventListener("click", open);
+		// 宿主会预挂载插件视图；保持空白，实际入口由上方 tab 点击接管。
+		container.replaceChildren();
+		register();
 		return () => {};
 	},
 };
