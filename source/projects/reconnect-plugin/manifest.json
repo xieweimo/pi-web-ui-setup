@@ -1,0 +1,23 @@
+{
+	"id": "reconnect",
+	"name": "重连",
+	"icon": "🔄",
+	"version": "1.0.0",
+	"description": "断连恢复：查看网页服务与重启守护状态，一键重新连接或重启网页服务（独立插件，不属于「同步」）",
+	"permissions": ["ui", "http"],
+	"ui": {
+		"topbar.primary": [
+			{
+				"id": "open",
+				"label": "重连",
+				"labelEn": "Reconnect",
+				"icon": "🔄",
+				"kind": "view",
+				"view": "plugin:reconnect",
+				"order": 45,
+				"hint": "重新连接或重启网页服务",
+				"hintEn": "Reconnect or restart the web service"
+			}
+		]
+	}
+}
