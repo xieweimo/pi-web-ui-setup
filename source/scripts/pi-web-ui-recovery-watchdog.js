@@ -47,6 +47,22 @@ function systemProxy() {
     return '';
   }
 }
+/** 本地代理端口必须正在监听；远程代理无法用本机监听表判断，直接保留。 */
+function proxyAvailable(proxy) {
+  try {
+    const url = new URL(proxy);
+    if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) return true;
+    const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-Command', `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue) -ne $null`],
+      { encoding: 'utf8', timeout: 8000 },
+    ).trim();
+    return out.toLowerCase() === 'true';
+  } catch {
+    return false;
+  }
+}
 function envForWeb() {
   const env = { ...process.env };
   try {
@@ -55,10 +71,12 @@ function envForWeb() {
   } catch {}
   try {
     let proxy = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).httpProxy;
+    if (proxy && !proxyAvailable(proxy)) proxy = '';
     if (!proxy) proxy = systemProxy();
     if (proxy) {
-      env.HTTP_PROXY ||= proxy;
-      env.HTTPS_PROXY ||= proxy;
+      // 覆盖继承值：代理软件切换端口后，父进程里可能仍残留旧端口。
+      env.HTTP_PROXY = proxy;
+      env.HTTPS_PROXY = proxy;
       const noProxy = new Set(String(env.NO_PROXY || '').split(',').filter(Boolean));
       ['localhost', '127.0.0.1', '::1'].forEach(x => noProxy.add(x));
       env.NO_PROXY = [...noProxy].join(',');

@@ -12,11 +12,21 @@
 function Get-PiProxyUrl {
     param([string]$PiSettingsFile = (Join-Path $env:USERPROFILE '.pi\agent\settings.json'))
 
+    function Test-LocalProxyAlive([string]$Url) {
+        try {
+            $u = [uri]$Url
+            if ($u.Host -notin @('127.0.0.1', 'localhost', '::1')) { return $true }
+            return [bool](Get-NetTCPConnection -LocalPort $u.Port -State Listen -ErrorAction SilentlyContinue)
+        } catch { return $false }
+    }
+
     # 1) pi 设置里的 httpProxy（authoritative）
     if (Test-Path $PiSettingsFile) {
         try {
             $v = (Get-Content $PiSettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json).httpProxy
-            if ($v) { return @{ url = [string]$v; source = 'pi settings.json' } }
+            if ($v -and (Test-LocalProxyAlive ([string]$v))) {
+                return @{ url = [string]$v; source = 'pi settings.json' }
+            }
         } catch { }
     }
 
@@ -35,7 +45,9 @@ function Get-PiProxyUrl {
             }
             if ($srv) {
                 if ($srv -notmatch '^https?://') { $srv = 'http://' + $srv }
-                return @{ url = $srv; source = 'Windows 系统代理' }
+                if (Test-LocalProxyAlive $srv) {
+                    return @{ url = $srv; source = 'Windows 系统代理' }
+                }
             }
         }
     } catch { }
@@ -49,8 +61,9 @@ function Set-PiProxyEnv {
     param([string]$PiSettingsFile = (Join-Path $env:USERPROFILE '.pi\agent\settings.json'))
     $p = Get-PiProxyUrl -PiSettingsFile $PiSettingsFile
     if (-not $p) { return $false }
-    if (-not $env:HTTP_PROXY)  { $env:HTTP_PROXY  = $p.url }
-    if (-not $env:HTTPS_PROXY) { $env:HTTPS_PROXY = $p.url }
+    # 已存在的环境变量也可能是代理软件上一次使用的旧端口，因此以当前可用配置覆盖。
+    $env:HTTP_PROXY  = $p.url
+    $env:HTTPS_PROXY = $p.url
     # 本机服务 / 浏览器回连绝不能绕到代理，否则 127.0.0.1:8787 会返回 502。
     $localNoProxy = 'localhost,127.0.0.1,::1'
     $env:NO_PROXY = if ($env:NO_PROXY) { "$($env:NO_PROXY),$localNoProxy" } else { $localNoProxy }
