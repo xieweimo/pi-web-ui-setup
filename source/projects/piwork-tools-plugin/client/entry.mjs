@@ -5,7 +5,7 @@
  *   1) 顶栏条目（manifest 的 ui.topbar，action="sync"）被点击时，宿主按需加载本
  *      bundle 并调用本模块顶层注册的 onUiAction 处理器 —— 所以注册写在**模块顶层**，
  *      不能只放在 mount 里（用户可能从没打开过插件视图）。
- *   2) 插件视图（顶栏 🛠 那个 tab）：显示最近一次同步的状态与输出，并提供手动触发。
+ *   2) 插件视图（顶栏 ⤴ 同步 tab）：显示最近一次同步的状态与输出，并提供手动触发。
  *
  * 与服务端只有 HTTP 一条通道：POST /plugins-api/piwork-tools/sync 触发，
  * GET /plugins-api/piwork-tools/state 轮询。不碰主应用内部状态。
@@ -112,7 +112,7 @@ function startPoll(announce = true) {
 			state = s;
 			if (s.error) say(`同步出错：${s.error}`);
 			else if (s.exitCode === 0) say("同步完成：pi-web-ui-setup 已是最新（打包、推送、GitHub 校验一致）");
-			else say(`同步未成功（退出码 ${s.exitCode}）——打开 🛠 PIwork 视图看输出`);
+			else say(`同步未成功（退出码 ${s.exitCode}）——打开 ⤴ 同步视图看输出`);
 		})();
 	}, POLL_MS);
 }
@@ -184,7 +184,7 @@ export default {
 		container.innerHTML = `
 <div class="pt">
 	<header>
-		<h2>🛠 PIwork<span class="pt-status"><span class="pt-dot"></span><span class="pt-status-text">读取中…</span></span></h2>
+		<h2>⤴ 同步<span class="pt-status"><span class="pt-dot"></span><span class="pt-status-text">读取中…</span></span></h2>
 		<button type="button" class="pt-sync">立即同步</button>
 	</header>
 	<p class="pt-hint">同步 = 重新打包安装包 → 提交并推送 AIWork 与 pi-web-ui-setup → 从 GitHub 匿名校验 SHA256。改完 pi / pi-web-ui 的定制后跑一次，异地机器才能装到最新版。</p>
