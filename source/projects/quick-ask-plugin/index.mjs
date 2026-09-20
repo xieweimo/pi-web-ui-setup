@@ -33,6 +33,18 @@ export default {
 			res.json({ ok: true, model: activeModel(host) });
 		});
 
+		host.route("GET", "/models", async (_req, res) => {
+			const current = activeModel(host);
+			const raw = await host.models.list();
+			const models = [...new Set((Array.isArray(raw) ? raw : []).map((item) => {
+				const id = String(item?.id ?? "").trim();
+				const provider = String(item?.provider ?? "").trim();
+				return id.includes("/") ? id : provider && id ? `${provider}/${id}` : id;
+			}).filter((id) => /^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+$/.test(id)))].sort();
+			if (current && !models.includes(current)) models.unshift(current);
+			res.json({ ok: true, current, models });
+		});
+
 		host.route("POST", "/ask", (req, res) => {
 			const text = String(req.body?.text ?? "").trim();
 			const model = String(req.body?.model ?? activeModel(host) ?? "").trim();

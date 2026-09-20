@@ -29,7 +29,7 @@ function addStyle() {
 #${ROOT_ID}{position:fixed;inset:0;z-index:10000;background:#0008;display:grid;place-items:center;padding:20px}
 #${ROOT_ID} .qa{width:min(760px,100%);height:min(720px,88vh);display:flex;flex-direction:column;background:var(--bg,#111118);color:var(--text,#ececf4);border:1px solid var(--border,#373744);border-radius:14px;box-shadow:0 24px 70px #0009;overflow:hidden;font:13px/1.6 system-ui,sans-serif}
 #${ROOT_ID} header{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border,#373744)}
-#${ROOT_ID} h2{font-size:15px;margin:0;flex:1} #${ROOT_ID} .qa-model{font-size:11px;opacity:.65;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${ROOT_ID} h2{font-size:15px;margin:0;flex:1} #${ROOT_ID} .qa-model{font:11px system-ui;color:inherit;background:var(--bg-elev1,#20202a);border:1px solid var(--border,#444);border-radius:6px;padding:5px 7px;max-width:48%}
 #${ROOT_ID} button{font:inherit;color:inherit;background:var(--bg-elev1,#20202a);border:1px solid var(--border,#444);border-radius:7px;padding:5px 10px;cursor:pointer} #${ROOT_ID} button:hover{border-color:var(--accent,#8b5cf6)} #${ROOT_ID} button.primary{background:var(--accent,#7c5cff);border-color:transparent;color:white} #${ROOT_ID} button:disabled{opacity:.55;cursor:default}
 #${ROOT_ID} .qa-log{flex:1;overflow:auto;padding:16px;white-space:pre-wrap;word-break:break-word;background:color-mix(in srgb,var(--bg,#111118) 90%,#000)}
 #${ROOT_ID} .qa-empty{opacity:.6} #${ROOT_ID} .qa-error{color:#f87171;margin-top:12px} #${ROOT_ID} .qa-form{padding:12px 16px;border-top:1px solid var(--border,#373744);display:grid;gap:8px}
@@ -56,8 +56,18 @@ function render(job, error = "") {
 	if (log) log.scrollTop = log.scrollHeight;
 }
 async function refreshModel(root) {
-	try { const { model } = await api("/model"); root.querySelector(".qa-model").textContent = model ? `当前模型：${model}` : "请先在主对话选择模型"; root.dataset.model = model || ""; }
-	catch { root.querySelector(".qa-model").textContent = "无法读取当前模型"; }
+	const select = root.querySelector(".qa-model");
+	try {
+		const { current, models } = await api("/models");
+		select.replaceChildren(...models.map((model) => {
+			const option = document.createElement("option"); option.value = model; option.textContent = model; return option;
+		}));
+		select.value = current || models[0] || "";
+		root.dataset.model = select.value;
+		select.onchange = () => { root.dataset.model = select.value; };
+		if (!select.value) { const option = document.createElement("option"); option.textContent = "没有可用模型"; select.append(option); }
+	}
+	catch { select.replaceChildren(new Option("无法读取模型", "")); root.dataset.model = ""; }
 }
 function startPolling() {
 	clearInterval(poll);
@@ -79,7 +89,7 @@ function open() {
 	if (document.getElementById(ROOT_ID)) return;
 	addStyle();
 	const root = document.createElement("div"); root.id = ROOT_ID;
-	root.innerHTML = `<section class="qa" role="dialog" aria-modal="true" aria-label="临时问问"><header><h2>💬 临时问问</h2><span class="qa-model">读取当前模型…</span><button class="qa-close" title="关闭">✕</button></header><div class="qa-log"><span class="qa-empty">这是独立的临时对话：不会读取或写入当前任务会话，也不能调用工具修改文件。</span></div><form class="qa-form"><textarea class="qa-input" autofocus placeholder="临时问一句…（Enter 发送，Shift+Enter 换行）"></textarea><div class="qa-actions"><span class="qa-note">结束后不保存历史记录</span><span><button type="button" class="qa-stop" hidden>停止</button><button class="primary qa-send" type="submit">发送</button></span></div></form></section>`;
+	root.innerHTML = `<section class="qa" role="dialog" aria-modal="true" aria-label="临时问问"><header><h2>💬 临时问问</h2><select class="qa-model" title="选择临时问答模型"><option>读取模型…</option></select><button class="qa-close" title="关闭">✕</button></header><div class="qa-log"><span class="qa-empty">这是独立的临时对话：不会读取或写入当前任务会话，也不能调用工具修改文件。</span></div><form class="qa-form"><textarea class="qa-input" autofocus placeholder="临时问一句…（Enter 发送，Shift+Enter 换行）"></textarea><div class="qa-actions"><span class="qa-note">结束后不保存历史记录</span><span><button type="button" class="qa-stop" hidden>停止</button><button class="primary qa-send" type="submit">发送</button></span></div></form></section>`;
 	document.body.appendChild(root); void refreshModel(root);
 	root.querySelector(".qa-close").onclick = close;
 	root.addEventListener("mousedown", (e) => { if (e.target === root) close(); });
