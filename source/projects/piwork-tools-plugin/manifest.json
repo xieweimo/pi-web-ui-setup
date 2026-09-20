@@ -8,7 +8,7 @@
 	"ui": {
 		"topbar.primary": [
 			{
-				"id": "sync",
+				"id": "__view",
 				"label": "同步",
 				"labelEn": "Sync",
 				"icon": "⤴",

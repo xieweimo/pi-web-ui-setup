@@ -9,7 +9,7 @@
 	"ui": {
 		"topbar.primary": [
 			{
-				"id": "open",
+				"id": "__view",
 				"label": "临时问问",
 				"labelEn": "Quick Ask",
 				"icon": "💬",

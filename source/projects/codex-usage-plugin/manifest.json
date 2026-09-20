@@ -11,7 +11,7 @@
 	"ui": {
 		"topbar.primary": [
 			{
-				"id": "open",
+				"id": "__view",
 				"label": "额度",
 				"labelEn": "Usage",
 				"icon": "⚡",
