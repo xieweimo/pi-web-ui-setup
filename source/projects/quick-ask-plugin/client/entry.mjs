@@ -6,6 +6,7 @@ const STYLE_ID = "quick-ask-style";
 let registered = false;
 let poll = null;
 let currentJob = null;
+let conversation = [];
 
 function host() { return window.__piWebUiHost ?? null; }
 function notify(text) { host()?.notifyAction?.({ text, actions: [] }); }
@@ -37,17 +38,18 @@ function addStyle() {
 	document.head.appendChild(style);
 }
 function close() {
-	clearInterval(poll); poll = null; currentJob = null;
+	clearInterval(poll); poll = null; currentJob = null; conversation = [];
 	document.getElementById(ROOT_ID)?.remove();
 }
 function render(job, error = "") {
 	const root = document.getElementById(ROOT_ID); if (!root) return;
 	const log = root.querySelector(".qa-log"); const send = root.querySelector(".qa-send"); const stop = root.querySelector(".qa-stop");
 	if (log) {
-		const body = job
-			? `<div style="margin:0 0 14px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(job.question ?? "")}</div><div><strong>回答：</strong>${job.output ? esc(job.output) : '<span class="qa-empty">正在思考…</span>'}</div>${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}`
-			: `<span class="qa-empty">输入问题后开始临时问答。</span>${error ? `<div class="qa-error">${esc(error)}</div>` : ""}`;
-		log.innerHTML = body;
+		const oldTurns = conversation.map((turn) => `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(turn.question)}</div><div style="margin:0 0 18px"><strong>回答：</strong>${esc(turn.answer)}</div>`).join("");
+		const current = job
+			? `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(job.question ?? "")}</div><div style="margin:0 0 18px"><strong>回答：</strong>${job.output ? esc(job.output) : '<span class="qa-empty">正在思考…</span>'}${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}</div>`
+			: "";
+		log.innerHTML = oldTurns || current || error ? `${oldTurns}${current}${error ? `<div class="qa-error">${esc(error)}</div>` : ""}` : '<span class="qa-empty">输入问题后开始临时问答。</span>';
 	}
 	if (send) send.disabled = Boolean(job?.running);
 	if (stop) { stop.hidden = !job?.running; stop.disabled = !job?.running; }
@@ -61,8 +63,16 @@ function startPolling() {
 	clearInterval(poll);
 	poll = setInterval(async () => {
 		if (!currentJob) return;
-		try { const { job } = await api(`/job?id=${encodeURIComponent(currentJob)}`); render(job); if (!job.running) clearInterval(poll); }
-		catch (err) { clearInterval(poll); render(null, err.message); }
+		try {
+			const { job } = await api(`/job?id=${encodeURIComponent(currentJob)}`);
+			if (!job.running) {
+				clearInterval(poll); poll = null;
+				conversation.push({ question: job.question ?? "", answer: job.output || job.error || "（没有返回内容）" });
+				currentJob = null;
+				render(null);
+			} else render(job);
+		}
+		catch (err) { clearInterval(poll); poll = null; currentJob = null; render(null, err.message); }
 	}, 500);
 }
 function open() {
@@ -78,7 +88,7 @@ function open() {
 	root.querySelector("form").onsubmit = async (e) => {
 		e.preventDefault(); const text = root.querySelector(".qa-input").value.trim(); const model = root.dataset.model;
 		if (!text) return; if (!model) return render(null, "请先在主对话选择模型。");
-		try { const { job } = await api("/ask", "POST", { text, model }); currentJob = job.id; root.querySelector(".qa-input").value = ""; render(job); startPolling(); }
+		try { const { job } = await api("/ask", "POST", { text, model, history: conversation }); currentJob = job.id; root.querySelector(".qa-input").value = ""; render(job); startPolling(); }
 		catch (err) { render(null, err.message); }
 	};
 	root.querySelector(".qa-input").focus();

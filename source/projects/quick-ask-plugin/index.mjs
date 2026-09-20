@@ -36,6 +36,7 @@ export default {
 		host.route("POST", "/ask", (req, res) => {
 			const text = String(req.body?.text ?? "").trim();
 			const model = String(req.body?.model ?? activeModel(host) ?? "").trim();
+			const history = Array.isArray(req.body?.history) ? req.body.history.slice(-12) : [];
 			if (!text) return res.status(400).json({ ok: false, error: "问题不能为空" });
 			if (text.length > MAX_QUESTION_CHARS) return res.status(400).json({ ok: false, error: `问题不能超过 ${MAX_QUESTION_CHARS} 个字符` });
 			if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+$/.test(model)) {
@@ -48,10 +49,15 @@ export default {
 			};
 			jobs.set(job.id, job);
 
+			const historyText = history.map((turn) => {
+				const question = String(turn?.question ?? "").slice(0, 4000);
+				const answer = String(turn?.answer ?? "").slice(0, 8000);
+				return `用户：${question}\n助手：${answer}`;
+			}).join("\n\n");
 			void host.llm.complete({
 				model,
-				system: "这是一个独立的临时问答，不是编程任务。请直接、简洁地回答；不要调用工具，也不要修改文件。",
-				prompt: text,
+				system: "这是一个独立的临时问答，不是编程任务。请直接、简洁地回答；不要调用工具，也不要修改文件。可参考下方临时对话历史保持上下文。",
+				prompt: historyText ? `临时对话历史：\n${historyText}\n\n用户的新问题：${text}` : text,
 				maxChars: MAX_OUTPUT_CHARS,
 				timeoutMs: JOB_TIMEOUT_MS,
 			}).then((result) => {
