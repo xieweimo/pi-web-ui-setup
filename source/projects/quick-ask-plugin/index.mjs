@@ -14,7 +14,8 @@ import { randomUUID } from "node:crypto";
 
 const MAX_QUESTION_CHARS = 8_000;
 const MAX_OUTPUT_CHARS = 40_000;
-const JOB_TIMEOUT_MS = 5 * 60_000;
+// 临时问答应快速返回；超时给出明确错误，避免界面长期“正在思考”。
+const JOB_TIMEOUT_MS = 90_000;
 const jobs = new Map();
 
 function piCommand() {
@@ -78,7 +79,8 @@ export default {
 			const command = piCommand();
 			const prompt = `这是一个独立的临时问答，不是编程任务。请直接、简洁地回答用户问题；不要调用工具、不要修改任何文件。\n\n用户问题：${text}`;
 			try {
-				job.child = spawn(command.file, [...command.prefix, "--no-session", "--no-tools", "--model", model, "--print", prompt], {
+				// 禁用扩展，避免独立进程加载会话/界面类扩展后阻塞无工具问答。
+				job.child = spawn(command.file, [...command.prefix, "--no-session", "--no-tools", "--no-extensions", "--model", model, "--print", prompt], {
 					cwd: process.cwd(), windowsHide: true, shell: false,
 				});
 				job.child.stdout?.on("data", (chunk) => append(job, chunk));
@@ -88,7 +90,7 @@ export default {
 					clearTimeout(job.timer);
 					job.running = false;
 					job.finishedAt = Date.now();
-					if (code !== 0 && !job.error) job.error = `临时问答退出码：${code}`;
+					if (code !== 0 && !job.error) job.error = `临时问答未正常完成（退出码：${code ?? "已终止"}）`;
 					job.child = null;
 				});
 				job.timer = setTimeout(() => {
