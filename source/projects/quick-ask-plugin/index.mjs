@@ -68,7 +68,7 @@ export default {
 			}).join("\n\n");
 			void host.llm.complete({
 				model,
-				system: "这是一个独立的临时问答，不是编程任务。请直接、简洁地回答；不要调用工具，也不要修改文件。可参考下方临时对话历史保持上下文。",
+				system: "这是一个独立的临时问答，不是编程任务。请给出内容充实、解释清楚的回答：先直接回答核心问题，再补充必要的原因、步骤或例子；除非用户明确要求简短，否则不要只给一句结论。不要调用工具，也不要修改文件。可参考下方临时对话历史保持上下文。",
 				prompt: historyText ? `临时对话历史：\n${historyText}\n\n用户的新问题：${text}` : text,
 				maxChars: MAX_OUTPUT_CHARS,
 				timeoutMs: JOB_TIMEOUT_MS,

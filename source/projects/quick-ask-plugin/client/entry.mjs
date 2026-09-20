@@ -45,9 +45,10 @@ function render(job, error = "") {
 	const root = document.getElementById(ROOT_ID); if (!root) return;
 	const log = root.querySelector(".qa-log"); const send = root.querySelector(".qa-send"); const stop = root.querySelector(".qa-stop");
 	if (log) {
-		const oldTurns = conversation.map((turn) => `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(turn.question)}</div><div style="margin:0 0 18px"><strong>回答：</strong>${esc(turn.answer)}</div>`).join("");
+		const oldTurns = conversation.map((turn) => `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(turn.question)}</div><div style="margin:0 0 18px"><strong>回答：</strong>${esc(turn.answer)}${turn.seconds != null ? `<div class="qa-note" style="margin-top:6px">用时 ${turn.seconds} 秒</div>` : ""}</div>`).join("");
+		const elapsed = job?.startedAt ? Math.max(0, Math.floor((Date.now() - job.startedAt) / 1000)) : 0;
 		const current = job
-			? `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(job.question ?? "")}</div><div style="margin:0 0 18px"><strong>回答：</strong>${job.output ? esc(job.output) : '<span class="qa-empty">正在思考…</span>'}${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}</div>`
+			? `<div style="margin:0 0 10px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(job.question ?? "")}</div><div style="margin:0 0 18px"><strong>回答：</strong>${job.output ? esc(job.output) : `<span class="qa-empty">正在思考… 已等待 ${elapsed} 秒</span>`}${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}</div>`
 			: "";
 		log.innerHTML = oldTurns || current || error ? `${oldTurns}${current}${error ? `<div class="qa-error">${esc(error)}</div>` : ""}` : '<span class="qa-empty">输入问题后开始临时问答。</span>';
 	}
@@ -77,7 +78,7 @@ function startPolling() {
 			const { job } = await api(`/job?id=${encodeURIComponent(currentJob)}`);
 			if (!job.running) {
 				clearInterval(poll); poll = null;
-				conversation.push({ question: job.question ?? "", answer: job.output || job.error || "（没有返回内容）" });
+				conversation.push({ question: job.question ?? "", answer: job.output || job.error || "（没有返回内容）", seconds: Math.max(0, Math.round(((job.finishedAt || Date.now()) - job.startedAt) / 1000)) });
 				currentJob = null;
 				render(null);
 			} else render(job);
