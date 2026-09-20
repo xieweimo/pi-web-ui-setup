@@ -85,7 +85,7 @@ function open() {
 }
 function register() {
 	if (registered || !host()?.onUiAction) return;
-	host().onUiAction("quick-ask:open", open); registered = true;
+	host().onUiAction("open", open); registered = true;
 }
 register(); setTimeout(register, 0);
 export default {
