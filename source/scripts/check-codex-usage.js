@@ -147,6 +147,13 @@ async function main() {
 		await new Promise(r => setTimeout(r, 1200));
 		return JSON.stringify({
 			pluginTab: [...document.querySelectorAll('.plugin-tab')].map(n => n.innerText.replace(/\\n/g, ' ')),
+			topbarItems: [...document.querySelectorAll('.topbar-flow > *')]
+				.filter(n => n.offsetWidth || n.offsetHeight)
+				.map(n => ({
+					text: (n.innerText || '').replace(/\\s+/g, ' ').trim(),
+					tip: n.getAttribute('data-tip') || n.getAttribute('title') || '',
+					cls: (n.className || '').toString()
+				})),
 			statusBarSummary: document.getElementById('codex-usage-statusbar')?.textContent ?? null,
 			// 官方 bottombar 槽位渲染出来的条目（0.90.0+）：宿主把 badge 类条目渲染成
 			// <button class="status-action">，靠 title 里的中文描述认出来。
@@ -179,6 +186,7 @@ async function main() {
 		console.log("✗ 页面探测失败");
 	} else {
 		console.log("插件 tab：", data.pluginTab.join(" / ") || "（未出现）");
+		console.log("顶部独立入口：", (data.topbarItems || []).map(x => x.text || x.tip).filter(Boolean).join(" / ") || "（未出现）");
 		console.log("状态栏摘要：", data.statusBarSummary ?? (data.slotBar ? data.slotBar.text + "（官方 bottombar 槽位）" : "（未注入）"));
 		if (data.slotBar) console.log("  悬停提示：", data.slotBar.title);
 		console.log("原生成本项已隐藏：", data.nativeCostHidden);
@@ -196,8 +204,11 @@ async function main() {
 			console.log("状态栏 HTML：");
 			for (const line of data.barHtml.replace(/></g, ">\n<").split("\n")) console.log("  " + line);
 		}
-		const ok = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0;
-		console.log(ok ? "\n✓ 插件工作正常" : "\n✗ 插件未生效（看上面的空项）");
+		const topbarText = (data.topbarItems || []).map(x => `${x.text} ${x.tip}`).join(' ');
+		const topbarOk = ['声音', '中文', '主题', 'v0.92.0', 'GitHub'].every(x => topbarText.includes(x));
+		const ok = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0 && topbarOk;
+		console.log("原生菜单项已提升到顶栏：", topbarOk);
+		console.log(ok ? "\n✓ 插件及顶栏按钮工作正常" : "\n✗ 自检未通过（看上面的空项）");
 	}
 
 	const shot = await send("Page.captureScreenshot", { format: "png" });
