@@ -1,6 +1,6 @@
 {
 	"id": "piwork-tools",
-	"name": "PIwork",
+	"name": "同步",
 	"icon": "⤴",
 	"version": "1.0.0",
 	"description": "PIwork 工作区工具：顶栏「同步」按钮（打包并推送 pi-web-ui-setup），以及断连时的「重连 / 重启网页服务」",
