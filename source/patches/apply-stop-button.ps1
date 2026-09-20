@@ -3,6 +3,10 @@
 # 说明：本文件必须保存为「无 BOM 的 UTF-8」，且行尾为 LF，否则 PS 5.1 解析器会误判 here-string。
 $ErrorActionPreference = 'Stop'
 
+# 输出按 UTF-8 编码：调用方（Node 的 profile 应用器、同步插件）按 UTF-8 读 stdout，
+# 默认的 GBK 控制台编码会让中文变成乱码。
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+
 # 定位 pi-web-ui：便携安装（install.json 记录 nodeDir/shim）优先，其次 npm 全局目录。
 $root = Split-Path $PSScriptRoot -Parent
 $candidates = @()
