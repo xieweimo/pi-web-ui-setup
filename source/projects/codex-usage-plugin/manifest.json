@@ -9,6 +9,19 @@
 		"ui"
 	],
 	"ui": {
+		"topbar.primary": [
+			{
+				"id": "open",
+				"label": "额度",
+				"labelEn": "Usage",
+				"icon": "⚡",
+				"kind": "view",
+				"view": "plugin:codex-usage",
+				"order": 30,
+				"hint": "查看订阅额度与按量成本",
+				"hintEn": "View subscription quota and usage cost"
+			}
+		],
 		"bottombar": [
 			{
 				"id": "bar",

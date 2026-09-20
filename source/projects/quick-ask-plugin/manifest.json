@@ -4,6 +4,21 @@
 	"icon": "💬",
 	"version": "1.0.0",
 	"description": "任务运行中打开独立临时问答浮层；沿用当前模型，但不读取、不写入当前任务会话。",
-	"view": true,
-	"permissions": ["ui", "http", "llm"]
+	"view": false,
+	"permissions": ["ui", "http", "llm"],
+	"ui": {
+		"topbar.primary": [
+			{
+				"id": "open",
+				"label": "临时问问",
+				"labelEn": "Quick Ask",
+				"icon": "💬",
+				"kind": "action",
+				"action": "open",
+				"order": 35,
+				"hint": "独立临时提问：不写入主会话、不调用工具",
+				"hintEn": "Ask independently without changing the main session"
+			}
+		]
+	}
 }
