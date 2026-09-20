@@ -18,6 +18,7 @@ function publicJob(job) {
 	return {
 		id: job.id,
 		model: job.model,
+		question: job.question,
 		running: job.running,
 		startedAt: job.startedAt,
 		finishedAt: job.finishedAt,
@@ -42,7 +43,7 @@ export default {
 			}
 
 			const job = {
-				id: randomUUID(), model, running: true, startedAt: Date.now(), finishedAt: 0,
+				id: randomUUID(), model, question: text, running: true, startedAt: Date.now(), finishedAt: 0,
 				output: "", error: "", cancelled: false,
 			};
 			jobs.set(job.id, job);

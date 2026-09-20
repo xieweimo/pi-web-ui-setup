@@ -45,7 +45,7 @@ function render(job, error = "") {
 	const log = root.querySelector(".qa-log"); const send = root.querySelector(".qa-send"); const stop = root.querySelector(".qa-stop");
 	if (log) {
 		const body = job
-			? `${job.output ? esc(job.output) : '<span class="qa-empty">正在思考…</span>'}${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}`
+			? `<div style="margin:0 0 14px;padding:9px 11px;border-radius:8px;background:var(--bg-elev1,#1a1a22)"><strong>你：</strong>${esc(job.question ?? "")}</div><div><strong>回答：</strong>${job.output ? esc(job.output) : '<span class="qa-empty">正在思考…</span>'}</div>${job.error ? `<div class="qa-error">${esc(job.error)}</div>` : ""}`
 			: `<span class="qa-empty">输入问题后开始临时问答。</span>${error ? `<div class="qa-error">${esc(error)}</div>` : ""}`;
 		log.innerHTML = body;
 	}
@@ -69,11 +69,11 @@ function open() {
 	if (document.getElementById(ROOT_ID)) return;
 	addStyle();
 	const root = document.createElement("div"); root.id = ROOT_ID;
-	root.innerHTML = `<section class="qa" role="dialog" aria-modal="true" aria-label="临时问问"><header><h2>💬 临时问问</h2><span class="qa-model">读取当前模型…</span><button class="qa-close" title="关闭">✕</button></header><div class="qa-log"><span class="qa-empty">这是独立的临时对话：不会读取或写入当前任务会话，也不能调用工具修改文件。</span></div><form class="qa-form"><textarea class="qa-input" autofocus placeholder="临时问一句…（Ctrl+Enter 发送）"></textarea><div class="qa-actions"><span class="qa-note">结束后不保存历史记录</span><span><button type="button" class="qa-stop" hidden>停止</button><button class="primary qa-send" type="submit">发送</button></span></div></form></section>`;
+	root.innerHTML = `<section class="qa" role="dialog" aria-modal="true" aria-label="临时问问"><header><h2>💬 临时问问</h2><span class="qa-model">读取当前模型…</span><button class="qa-close" title="关闭">✕</button></header><div class="qa-log"><span class="qa-empty">这是独立的临时对话：不会读取或写入当前任务会话，也不能调用工具修改文件。</span></div><form class="qa-form"><textarea class="qa-input" autofocus placeholder="临时问一句…（Enter 发送，Shift+Enter 换行）"></textarea><div class="qa-actions"><span class="qa-note">结束后不保存历史记录</span><span><button type="button" class="qa-stop" hidden>停止</button><button class="primary qa-send" type="submit">发送</button></span></div></form></section>`;
 	document.body.appendChild(root); void refreshModel(root);
 	root.querySelector(".qa-close").onclick = close;
 	root.addEventListener("mousedown", (e) => { if (e.target === root) close(); });
-	root.querySelector(".qa-input").addEventListener("keydown", (e) => { if (e.key === "Escape") close(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) root.querySelector("form").requestSubmit(); });
+	root.querySelector(".qa-input").addEventListener("keydown", (e) => { if (e.key === "Escape") close(); if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); root.querySelector("form").requestSubmit(); } });
 	root.querySelector(".qa-stop").onclick = async () => { if (currentJob) { try { await api("/stop", "POST", { id: currentJob }); } catch (err) { notify(`停止失败：${err.message}`); } } };
 	root.querySelector("form").onsubmit = async (e) => {
 		e.preventDefault(); const text = root.querySelector(".qa-input").value.trim(); const model = root.dataset.model;
