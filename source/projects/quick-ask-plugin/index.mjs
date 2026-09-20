@@ -1,36 +1,12 @@
 /**
- * quick-ask —— 独立临时问答服务端。
- *
- * 每次提问启动 `pi --no-session --no-tools --print`：
- * - `--no-session` 不创建/续写任何 JSONL 会话；
- * - `--no-tools` 不允许读写文件或执行命令；
- * - 当前模型仅作为一次性参数传入，主任务运行时完全不受影响。
+ * quick-ask —— 通过插件宿主的 llm.complete 执行孤立、无工具、无历史的一次性问答。
  */
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const MAX_QUESTION_CHARS = 8_000;
 const MAX_OUTPUT_CHARS = 40_000;
-// 临时问答应快速返回；超时给出明确错误，避免界面长期“正在思考”。
 const JOB_TIMEOUT_MS = 90_000;
 const jobs = new Map();
-
-function piCommand() {
-	if (process.platform === "win32") {
-		const npmDir = join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "npm");
-		const cli = join(npmDir, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js");
-		// 不经 cmd.exe：避免用户问题中的 &、引号等字符被 shell 当成命令执行。
-		if (existsSync(cli)) return { file: process.execPath, prefix: [cli] };
-	}
-	return { file: "pi", prefix: [] };
-}
-
-function stopChild(job) {
-	try { job.child?.kill(); } catch { /* 已退出 */ }
-}
 
 function activeModel(host) {
 	const model = host.getActiveConversation?.()?.activeModel;
@@ -50,15 +26,9 @@ function publicJob(job) {
 	};
 }
 
-function append(job, text, isError = false) {
-	const key = isError ? "error" : "output";
-	job[key] = `${job[key]}${String(text)}`.slice(-MAX_OUTPUT_CHARS);
-}
-
 export default {
 	activate(host) {
 		host.route("GET", "/model", (_req, res) => {
-			// 与其他插件接口保持一致；客户端 api() 会校验 ok。
 			res.json({ ok: true, model: activeModel(host) });
 		});
 
@@ -73,36 +43,30 @@ export default {
 
 			const job = {
 				id: randomUUID(), model, running: true, startedAt: Date.now(), finishedAt: 0,
-				output: "", error: "", child: null, timer: null,
+				output: "", error: "", cancelled: false,
 			};
 			jobs.set(job.id, job);
-			const command = piCommand();
-			const prompt = `这是一个独立的临时问答，不是编程任务。请直接、简洁地回答用户问题；不要调用工具、不要修改任何文件。\n\n用户问题：${text}`;
-			try {
-				// 禁用扩展，避免独立进程加载会话/界面类扩展后阻塞无工具问答。
-				job.child = spawn(command.file, [...command.prefix, "--no-session", "--no-tools", "--no-extensions", "--model", model, "--print", prompt], {
-					cwd: process.cwd(), windowsHide: true, shell: false,
-				});
-				job.child.stdout?.on("data", (chunk) => append(job, chunk));
-				job.child.stderr?.on("data", (chunk) => append(job, chunk, true));
-				job.child.on("error", (err) => append(job, err?.message ?? String(err), true));
-				job.child.on("close", (code) => {
-					clearTimeout(job.timer);
-					job.running = false;
-					job.finishedAt = Date.now();
-					if (code !== 0 && !job.error) job.error = `临时问答未正常完成（退出码：${code ?? "已终止"}）`;
-					job.child = null;
-				});
-				job.timer = setTimeout(() => {
-					append(job, "临时问答超时，已停止。", true);
-					stopChild(job);
-				}, JOB_TIMEOUT_MS);
-				job.timer.unref?.();
-				return res.json({ ok: true, job: publicJob(job) });
-			} catch (err) {
-				jobs.delete(job.id);
-				return res.status(500).json({ ok: false, error: String(err?.message ?? err) });
-			}
+
+			void host.llm.complete({
+				model,
+				system: "这是一个独立的临时问答，不是编程任务。请直接、简洁地回答；不要调用工具，也不要修改文件。",
+				prompt: text,
+				maxChars: MAX_OUTPUT_CHARS,
+				timeoutMs: JOB_TIMEOUT_MS,
+			}).then((result) => {
+				if (job.cancelled) return;
+				job.running = false;
+				job.finishedAt = Date.now();
+				if (result?.ok) job.output = String(result.text ?? "").slice(-MAX_OUTPUT_CHARS);
+				else job.error = String(result?.error ?? "临时问答失败");
+			}).catch((err) => {
+				if (job.cancelled) return;
+				job.running = false;
+				job.finishedAt = Date.now();
+				job.error = String(err?.message ?? err);
+			});
+
+			return res.json({ ok: true, job: publicJob(job) });
 		});
 
 		host.route("GET", "/job", (req, res) => {
@@ -114,15 +78,15 @@ export default {
 		host.route("POST", "/stop", (req, res) => {
 			const job = jobs.get(String(req.body?.id ?? ""));
 			if (!job) return res.status(404).json({ ok: false, error: "临时问答不存在" });
-			stopChild(job);
+			job.cancelled = true;
+			job.running = false;
+			job.finishedAt = Date.now();
+			job.error = "临时问答已停止。";
 			return res.json({ ok: true });
 		});
 
 		return () => {
-			for (const job of jobs.values()) {
-				clearTimeout(job.timer);
-				stopChild(job);
-			}
+			for (const job of jobs.values()) job.cancelled = true;
 			jobs.clear();
 		};
 	},
