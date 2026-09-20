@@ -86,15 +86,21 @@ foreach ($dir in @($privateDir, $publicDir)) {
         if ($dirty) {
             $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
             git add -A | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "git add 失败: $dir" }
             git commit -q -m "同步 pi / pi-web-ui 定制（$stamp）" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "git commit 失败: $dir" }
             Info ("  已提交: " + (Split-Path $dir -Leaf))
         } else {
             Info ("  无改动: " + (Split-Path $dir -Leaf))
         }
         $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $branch -or $branch -eq 'HEAD') { throw "仓库不在有效分支上: $dir" }
         git push -q origin $branch
+        if ($LASTEXITCODE -ne 0) { throw "git push 失败: $dir ($branch)" }
         $local = (git rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "读取本地提交失败: $dir" }
         $remote = (git rev-parse "origin/$branch").Trim()
+        if ($LASTEXITCODE -ne 0) { throw "读取远端跟踪提交失败: $dir" }
         if ($local -ne $remote) { throw "推送后仍不一致: $dir" }
         Ok ("  已推送: " + (Split-Path $dir -Leaf) + " " + $local.Substring(0, 7))
     } finally {
