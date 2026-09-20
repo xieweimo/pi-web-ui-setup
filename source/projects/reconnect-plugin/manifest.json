@@ -14,7 +14,9 @@
 				"icon": "🔄",
 				"kind": "view",
 				"view": "plugin:reconnect",
-				"order": 45,
+				"order": 23.3,
+				"group": "views",
+				"align": "end",
 				"hint": "重新连接或重启网页服务",
 				"hintEn": "Reconnect or restart the web service"
 			}

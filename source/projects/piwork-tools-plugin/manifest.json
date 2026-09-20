@@ -12,9 +12,11 @@
 				"label": "同步",
 				"labelEn": "Sync",
 				"icon": "⤴",
-				"kind": "action",
-				"action": "sync",
-				"order": 40,
+				"kind": "view",
+				"view": "plugin:piwork-tools",
+				"order": 23.2,
+				"group": "views",
+				"align": "end",
 				"hint": "打包并推送 pi-web-ui-setup",
 				"hintEn": "Package and push pi-web-ui-setup"
 			}
