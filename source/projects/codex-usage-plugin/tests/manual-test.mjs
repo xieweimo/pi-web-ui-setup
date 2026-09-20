@@ -30,7 +30,7 @@ function makeHost(provider) {
 		broadcast: (p) => seen.push(p.state),
 		getActiveConversation: () => ({
 			messages: provider
-				? [{ role: "assistant", provider, model: provider === "openai-codex" ? "gpt-5-codex" : "claude-sonnet-4" }]
+				? [{ role: "assistant", provider, model: provider === "openai-codex" ? "gpt-5-codex" : "claude-sonnet-4", usageCost: 1.2345 }]
 				: [],
 			stats: { cost: 1.2345, totalMessages: 7, tokens: {} },
 		}),

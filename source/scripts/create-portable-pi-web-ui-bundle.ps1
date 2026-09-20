@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $root 'archive'
 $stage = Join-Path $outDir '.pi-web-ui-stage'
-$zip = Join-Path $outDir 'PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip'
+$zip = Join-Path $outDir 'PiWebUI-Setup_pi-0.85.1_web-0.92.0.zip'
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null

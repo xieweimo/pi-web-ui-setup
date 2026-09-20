@@ -15,8 +15,18 @@ const target = locateWebUiFile("dist", "server", "agent-service.js");
 const marker = "plugin-live-model-patch";
 const conversationNeedle = `                isStreaming: target.session.isStreaming,\n                messages: this.messagesOf(target),`;
 const conversationReplacement = `                isStreaming: target.session.isStreaming,\n                // ${marker}: 当前选择，不能用最后一条历史 assistant 消息代替。\n                activeModel: state.model\n                    ? { provider: state.model.provider ?? null, model: state.model.id ?? null }\n                    : null,\n                messages: this.messagesOf(target),`;
-const setModelNeedle = `            this.rememberProjectModel(modelId);\n        }\n        catch (err) {`;
-const setModelReplacement = `            this.rememberProjectModel(modelId);\n            // ${marker}: 切换成功即通知插件，不等下一条 assistant 消息。\n            this.notifyConversationChanged();\n        }\n        catch (err) {`;
+const setModelVariants = [
+  {
+    name: "0.90.x",
+    needle: `            this.rememberProjectModel(modelId);\n        }\n        catch (err) {`,
+    replacement: `            this.rememberProjectModel(modelId);\n            // ${marker}: 切换成功即通知插件，不等下一条 assistant 消息。\n            this.notifyConversationChanged();\n        }\n        catch (err) {`,
+  },
+  {
+    name: "0.92.x",
+    needle: `            this.rememberProjectModel(modelId);\n            // 换模型后按新模型的窗口重算软上限覆盖（按模型覆盖可能不同，issue #229）。\n            this.applyCompactionOverrides();\n        }\n        catch (err) {`,
+    replacement: `            this.rememberProjectModel(modelId);\n            // 换模型后按新模型的窗口重算软上限覆盖（按模型覆盖可能不同，issue #229）。\n            this.applyCompactionOverrides();\n            // ${marker}: 切换成功即通知插件，不等下一条 assistant 消息。\n            this.notifyConversationChanged();\n        }\n        catch (err) {`,
+  },
+];
 
 if (!target || !fs.existsSync(target)) {
   console.error(`target not found: ${target}`);
@@ -27,10 +37,12 @@ if (source.includes(marker)) {
   console.log("live-model patch already exists");
   process.exit(0);
 }
-if (!source.includes(conversationNeedle) || !source.includes(setModelNeedle)) {
-  console.error("pi-web-ui source changed; live-model patch not applied");
+const matched = setModelVariants.filter((v) => source.split(v.needle).length - 1 === 1);
+if (!source.includes(conversationNeedle) || matched.length !== 1) {
+  console.error(`pi-web-ui source changed; live-model patch not applied (setModel variants: ${matched.length})`);
   process.exit(2);
 }
-source = source.replace(conversationNeedle, conversationReplacement).replace(setModelNeedle, setModelReplacement);
+const variant = matched[0];
+source = source.replace(conversationNeedle, conversationReplacement).replace(variant.needle, variant.replacement);
 fs.writeFileSync(target, source, "utf8");
 console.log("live-model patch applied");

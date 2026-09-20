@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $templateFile = Join-Path $root 'configs\pi-settings.template.json'
 $agentDir = Join-Path $env:USERPROFILE '.pi\agent'
-if (-not $SkipNpmInstall) { npm install -g '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.86.2' }
+if (-not $SkipNpmInstall) { npm install -g '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.92.0' }
 if (-not (Get-Command pi -ErrorAction SilentlyContinue) -or -not (Get-Command pi-web-ui -ErrorAction SilentlyContinue)) { throw 'pi or pi-web-ui was not found.' }
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
 $template = Get-Content $templateFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -42,7 +42,7 @@ foreach ($seed in $seedFiles) {
     else { Copy-Item $srcFile $dstFile -Force; Write-Host ('  已写入 ' + $seed.label + ' -> ' + $dstFile) }
 }
 
-# 界面插件（codex-usage 额度/成本、piwork-tools 同步按钮、quick-ask 临时问问）：拷进 <dataDir>/plugins/，
+# 界面插件（codex-usage 额度/成本、piwork-tools 同步、quick-ask 临时问问、reconnect 重连）：拷进 <dataDir>/plugins/，
 # 与 pi-web-ui 包目录分离，npm 升级不会动它们。
 node (Join-Path $root 'scripts\install-plugins.js')
 

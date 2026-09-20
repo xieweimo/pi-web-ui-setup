@@ -152,7 +152,7 @@ async function main() {
 			// <button class="status-action">，靠 title 里的中文描述认出来。
 			slotBar: (() => {
 				const btn = [...document.querySelectorAll('.statusbar .status-action')]
-					.find(n => /订阅额度|按量成本|Codex 订阅/.test(n.getAttribute('title') || ''));
+					.find(n => /订阅额度|按量成本|Codex 订阅|5h\\s*已用|每周\\s*已用/.test((n.getAttribute('title') || '') + ' ' + (n.textContent || '')));
 				return btn ? { text: (btn.innerText || '').trim(), title: btn.getAttribute('title') || '' } : null;
 			})(),
 			nativeCostHidden: costItem ? costItem.style.display === 'none' : null,

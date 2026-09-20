@@ -33,7 +33,7 @@ $u='https://cdn.jsdelivr.net/gh/xieweimo/pi-web-ui-setup@main/install.ps1?t='+(G
 ## 安装器会做什么
 
 1. 安装或复用隔离的便携 Node.js 22+ 到 `%USERPROFILE%\PiWebUI\node`（免管理员，不会改动系统 Node/npm），镜像依次尝试 nodejs.org / npmmirror / 清华。
-2. 安装固定版本 `pi 0.85.1` + `pi-web-ui 0.86.2`：依赖走国内镜像，镜像缺的包单独从官方 tarball 拉取。
+2. 安装固定版本 `pi 0.85.1` + `pi-web-ui 0.92.0`：依赖走国内镜像，镜像缺的包单独从官方 tarball 拉取。
 3. 写入 `install.json`（记录便携 Node 与启动命令位置；补丁和启动器靠它定位）。
 4. 解压定制包并应用补丁（按版本 profile 校验，版本不匹配就跳过，不盲改）。
 5. 写入通用 pi 偏好（**无 BOM** 的 UTF-8，避免 pi 报 `Failed to parse settings file`）。
@@ -47,11 +47,12 @@ $u='https://cdn.jsdelivr.net/gh/xieweimo/pi-web-ui-setup@main/install.ps1?t='+(G
 
 ```
 source/
-├── projects/                       ← 三个界面插件（完整源码）
+├── projects/                       ← 四个界面插件（完整源码）
 │   ├── codex-usage-plugin/         ChatGPT 订阅额度 + 人民币成本
-│   ├── piwork-tools-plugin/        顶栏 ⤴同步 + 🛠PIwork
-│   └── quick-ask-plugin/           💬 临时问问
-├── patches/                        ← pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁
+│   ├── piwork-tools-plugin/        顶栏 ⤴同步
+│   ├── quick-ask-plugin/           💬 临时问问
+│   └── reconnect-plugin/           🔄 重连
+├── patches/                        ← pi-web-ui 补丁 + page-picker 扩展「全站放行」补丁
 ├── configs/                        ← pi 设置模板、全局 AGENTS.md、模型库、版本档案
 ├── scripts/                        ← 启动器、断连守护、插件安装器、打包与同步脚本
 ├── extras/page-picker-extension.zip
@@ -62,8 +63,9 @@ source/
 |---|---|
 | `source/projects/codex-usage-plugin/` | 界面插件：ChatGPT 订阅额度 + 人民币成本（服务端入口 + 客户端视图 + 声明式设置） |
 | `source/projects/piwork-tools-plugin/` | 界面插件：顶栏 `⤴同步`（打包→推送→校验）+ `🛠PIwork` 状态视图 |
-| `source/projects/quick-ask-plugin/` | 界面插件：`💬 临时问问`独立临时问答面板 |
-| `source/patches/` | pi-web-ui 的 5 个补丁 + page-picker 扩展「全站放行」补丁 |
+| `source/projects/quick-ask-plugin/` | 界面插件：`💬 临时问问`独立临时问答浮层 |
+| `source/projects/reconnect-plugin/` | 界面插件：`🔄 重连`与网页服务重启 |
+| `source/patches/` | pi-web-ui 补丁 + page-picker 扩展「全站放行」补丁 |
 | `source/configs/` | pi 设置模板、全局 AGENTS.md、模型库、版本档案（`pi-web-ui-profiles/`） |
 | `source/scripts/` | 启动器、断连守护、插件安装器、打包与同步脚本 |
 | `source/extras/page-picker-extension.zip` | 浏览器扩展（配合 `source/patches/apply-page-picker-all-urls.js`） |
@@ -75,7 +77,7 @@ source/
 pi-web-ui install https://github.com/xieweimo/pi-web-ui-setup/tree/main/source/projects/piwork-tools-plugin --force
 ```
 
-（一键安装已自动装好三个插件，这条命令只在别处补装时用。）
+（一键安装已自动装好四个插件，这条命令只在别处补装时用。）
 
 ## 不会做什么
 
@@ -83,7 +85,7 @@ pi-web-ui install https://github.com/xieweimo/pi-web-ui-setup/tree/main/source/p
 
 ## 手动 / 离线安装
 
-下载 `PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip`，解压后运行：
+下载 `PiWebUI-Setup_pi-0.85.1_web-0.92.0.zip`，解压后运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-aiwork.ps1

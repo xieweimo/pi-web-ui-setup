@@ -1,0 +1,14 @@
+{
+  "piVersion": "0.85.1",
+  "piWebUiVersion": "0.92.0",
+  "patches": [
+    "patches/patch-pi-web-ui-usage-cost.js",
+    "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-hide-forked-sessions.js",
+    "patches/patch-pi-web-ui-permanent-project-ignore.js",
+    "patches/patch-pi-web-ui-recovery-ui.js",
+    "patches/patch-pi-web-ui-quick-phrase-queue.js",
+    "patches/apply-stop-button.ps1"
+  ],
+  "notes": "已验证（pi 0.85.1 + pi-web-ui 0.92.0）：额度/按量成本、模型切换即时刷新、历史列表 fork 链尾去重、永久隐藏指定最近项目、断连恢复、快捷短语排队、红色停止按钮。0.92.0 适配：插件视图改为统一菜单后，四个自有插件通过 topbar.primary + __view 固定到原生视图组并去重；quick-phrase-queue 与 plugin-live-model 增加 0.92.x 精确锚点；升级后必须重启服务以加载补丁后的服务端代码与新前端 bundle。"
+}

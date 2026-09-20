@@ -13,7 +13,7 @@ $repoRoot   = Split-Path $PSScriptRoot -Parent
 $workRoot   = Split-Path $repoRoot -Parent                       # C:\AIWork\PI
 $privateDir = Split-Path $workRoot -Parent                       # C:\AIWork
 $publicDir  = Join-Path $workRoot 'pi-web-ui-setup'
-$zipName    = 'PiWebUI-Setup_pi-0.85.1_web-0.86.2.zip'
+$zipName    = 'PiWebUI-Setup_pi-0.85.1_web-0.92.0.zip'
 $files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source/docs/after-install-checklist.md', 'source/projects/piwork-tools-plugin/manifest.json')
 $rawBase    = 'https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main'
 
@@ -39,6 +39,10 @@ Info '=== 1/5 重新打包安装包 ==='
 $zipPath = Join-Path $repoRoot "archive\$zipName"
 if (-not (Test-Path $zipPath)) { throw "打包失败：$zipPath 不存在" }
 Copy-Item $zipPath (Join-Path $publicDir $zipName) -Force
+# 公开安装入口只保留当前版本，避免用户误下载旧包；私有 archive/ 仍保留历史包。
+Get-ChildItem $publicDir -File -Filter 'PiWebUI-Setup_pi-*_web-*.zip' |
+    Where-Object { $_.Name -ne $zipName } |
+    Remove-Item -Force
 Ok ('  安装包已更新: ' + [math]::Round((Get-Item $zipPath).Length / 1KB, 1) + ' KB')
 
 Info '=== 2/5 镜像定制源码到公开仓库 source/ ==='
