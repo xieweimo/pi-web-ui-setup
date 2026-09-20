@@ -72,9 +72,17 @@ function resolveRoot(host) {
 	return null;
 }
 
+/** PowerShell 单引号字符串转义。 */
+function psQuote(value) {
+	return `'${String(value).replaceAll("'", "''")}'`;
+}
+
 function pushLines(chunk) {
-	const text = String(chunk).replace(/\r/g, "");
-	for (const line of text.split("\n")) {
+	// 子进程已被显式切到 UTF-8；这里按 UTF-8 解码，避免 Windows PowerShell
+	// 默认 OEM/系统代码页导致中文被 Node 当成 UTF-8 后显示为乱码。
+	const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+	const clean = text.replace(/\r/g, "");
+	for (const line of clean.split("\n")) {
 		if (!line.trim()) continue;
 		job.lines.push(line.slice(0, 500));
 	}
@@ -139,7 +147,17 @@ function startJob(host) {
 	job.error = null;
 	job.lines = [];
 	try {
-		child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, SCRIPT_REL)], {
+		const script = join(root, SCRIPT_REL);
+		// Windows PowerShell 5.1 在重定向 stdout 时默认不保证 UTF-8。先显式设置
+		// 控制台与管道编码，再调用脚本并原样传递退出码。
+		const command = [
+			"$utf8 = New-Object System.Text.UTF8Encoding($false)",
+			"[Console]::OutputEncoding = $utf8",
+			"$OutputEncoding = $utf8",
+			`& ${psQuote(script)}`,
+			"exit $LASTEXITCODE",
+		].join("; ");
+		child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
 			cwd: root,
 			windowsHide: true,
 		});
@@ -148,6 +166,9 @@ function startJob(host) {
 		job.error = String(err?.message ?? err);
 		return { ok: false, error: job.error };
 	}
+	// setEncoding 内部会保留跨 chunk 的半个 UTF-8 字符，避免边界处出现 �。
+	child.stdout?.setEncoding("utf8");
+	child.stderr?.setEncoding("utf8");
 	child.stdout?.on("data", pushLines);
 	child.stderr?.on("data", pushLines);
 	child.on("error", (err) => {
