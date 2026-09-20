@@ -77,7 +77,9 @@ function envForWeb() {
       // 覆盖继承值：代理软件切换端口后，父进程里可能仍残留旧端口。
       env.HTTP_PROXY = proxy;
       env.HTTPS_PROXY = proxy;
-      const noProxy = new Set(String(env.NO_PROXY || '').split(',').filter(Boolean));
+      // 兼容曾被错误包上引号的 Windows 环境变量；NO_PROXY 里的引号会让
+      // api.deepseek.com 匹配失败，从而错误地走 HTTP_PROXY。
+      const noProxy = new Set(String(env.NO_PROXY || '').replace(/["']/g, '').split(',').map(x => x.trim()).filter(Boolean));
       ['localhost', '127.0.0.1', '::1'].forEach(x => noProxy.add(x));
       env.NO_PROXY = [...noProxy].join(',');
       env.no_proxy = env.NO_PROXY;

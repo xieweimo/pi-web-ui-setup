@@ -66,7 +66,13 @@ function Set-PiProxyEnv {
     $env:HTTPS_PROXY = $p.url
     # 本机服务 / 浏览器回连绝不能绕到代理，否则 127.0.0.1:8787 会返回 502。
     $localNoProxy = 'localhost,127.0.0.1,::1'
-    $env:NO_PROXY = if ($env:NO_PROXY) { "$($env:NO_PROXY),$localNoProxy" } else { $localNoProxy }
+    # Windows 环境变量曾被误写成带引号的值（例如 "api.deepseek.com"）。
+    # pi 的 NO_PROXY 解析器把引号当域名的一部分，导致本应直连的域名又走了代理；
+    # NO_PROXY 不需要引号，注入前统一剔除，且保留已有的业务绕行项。
+    $existingNoProxy = ([string]$env:NO_PROXY).Replace('"', '').Replace("'", '').Trim()
+    $noProxyEntries = @(($existingNoProxy + ',' + $localNoProxy).Split(',')) |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
+    $env:NO_PROXY = $noProxyEntries -join ','
     $env:no_proxy = $env:NO_PROXY
     Write-Host ("  代理已注入（来源：" + $p.source + "）：" + $p.url)
     return $true
