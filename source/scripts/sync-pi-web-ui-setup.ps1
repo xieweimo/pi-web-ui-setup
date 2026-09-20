@@ -98,7 +98,12 @@ foreach ($dir in @($privateDir, $publicDir)) {
     }
 }
 
-Info '=== 4/5 从 GitHub 匿名核对（不登录） ==='
+# 校验必须固定到刚推送的精确提交。若继续请求 main，GitHub Raw/CDN 可能短时间
+# 返回旧分支内容，把已经成功的推送误报成失败。
+$publicCommit = (git -C $publicDir rev-parse HEAD).Trim()
+$verifyRawBase = "https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/$publicCommit"
+
+Info ("=== 4/5 从 GitHub 匿名核对（精确提交 " + $publicCommit.Substring(0, 7) + "） ===")
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 try { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy } catch { }
 # 国内直连 raw.githubusercontent 可能超时：如果 pi 设置里有 httpProxy，就给校验请求也用上
@@ -121,7 +126,7 @@ foreach ($f in $files) {
     for ($i = 1; $i -le 3 -and -not $got; $i++) {
         try {
             $tmp = Join-Path $env:TEMP ("raw-" + $safeName + "-" + $i)
-            $url = "$rawBase/$f`?t=" + [guid]::NewGuid().ToString('N')
+            $url = "$verifyRawBase/$f"
             Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 20
             $got = Get-Sha256 $tmp
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -139,7 +144,7 @@ foreach ($f in $files) {
 
 Info '=== 5/5 结果 ==='
 if ($failed.Count -gt 0) {
-    Warn ('  以下文件与 GitHub 不一致（CDN 可能仍在缓存，稍后重跑即可）：' + ($failed -join ', '))
+    Warn ('  以下文件与 GitHub 精确提交不一致：' + ($failed -join ', '))
     exit 2
 }
 if ($offline -gt 0) {
