@@ -57,7 +57,8 @@ function append(job, text, isError = false) {
 export default {
 	activate(host) {
 		host.route("GET", "/model", (_req, res) => {
-			res.json({ model: activeModel(host) });
+			// 与其他插件接口保持一致；客户端 api() 会校验 ok。
+			res.json({ ok: true, model: activeModel(host) });
 		});
 
 		host.route("POST", "/ask", (req, res) => {
