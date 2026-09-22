@@ -74,14 +74,16 @@ $liveModelPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-live-model.js'
 # $recoveryUiPatch 已停用（旧版本包回退时可重新启用）。
 $hideForkedPatch = Join-Path $cwd 'patches\patch-pi-web-ui-hide-forked-sessions.js'
 $managedRecentProjectsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-permanent-project-ignore.js'
-$quickPhraseQueuePatch = Join-Path $cwd 'patches\patch-pi-web-ui-quick-phrase-queue.js'
+# 快捷短语排队（quick-phrase-queue）自 0.94.1 起停用：上游已内建右键排队，直接用上游的，
+# 不再额外挂 ⏳ 按钮。需要从已注入的包里清除时手动跑
+# `node patches\patch-pi-web-ui-quick-phrase-queue.js --remove`。
 $topbarMenuButtonsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-topbar-menu-buttons.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
 $stopButtonPatch = Join-Path $cwd 'patches\apply-stop-button.ps1'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $quickPhraseQueuePatch, $topbarMenuButtonsPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
 }
 # reconnect 的 watchdog 端口与 descriptor 协议必须和启动器一致；启动时幂等更新插件副本。

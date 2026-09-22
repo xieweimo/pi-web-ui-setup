@@ -1,5 +1,7 @@
 ﻿# Start the isolated pi-web-ui source development environment.
-param([switch]$OpenBrowser)
+# -OpenBrowser 启动后自动打开开发页面
+# -NoWatch     不进入「页面一关就停服」的监控（默认会监控，与正式版启动器同一套行为）
+param([switch]$OpenBrowser, [switch]$NoWatch)
 
 $ErrorActionPreference = 'Stop'
 
@@ -133,6 +135,11 @@ if (-not (Test-Port $watchdogPort)) {
 
 if (-not (Test-Port $watchdogPort)) { throw "Development watchdog failed to listen on $watchdogPort." }
 
+# 开发环境的插件与正式版保持一致（幂等；已存在的 config.json 不会被覆盖）。
+# 其中 piwork-tools 提供了 /busy 端点，供下面的停服监控判断“还有任务在跑吗”。
+$pluginInstaller = Join-Path $root 'scripts\install-plugins.js'
+if (Test-Path $pluginInstaller) { & node $pluginInstaller --data-dir $devData | Out-Null }
+
 $state = Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/state" -TimeoutSec 3
 if (-not $state.serviceHealthy) {
     Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/start" -Method Post -TimeoutSec 3 | Out-Null
@@ -153,3 +160,52 @@ if (-not $ready) {
 if ($OpenBrowser) { Start-Process "http://localhost:$webPort" }
 Write-Host "pi-web-ui dev is ready: http://localhost:$webPort"
 Write-Host "Backend: http://localhost:$serverPort  Watchdog: http://localhost:$watchdogPort"
+
+# 监听连接：页面一关就自动停服（与 scripts\pi-web-ui-launcher.ps1 同一套逻辑）。
+#   - 断开满 $idleLimit 秒 → 先问一句“还有任务在跑吗”，不忙才停（叉掉即关，但不会截断正在跑的活）；
+#   - 刷新页面 / 网络抖动会在这个窗口内重连，计数自动重置；
+#   - 页面一次都没连上时用 $idleFallback 兜底；
+#   - 服务不在监听（例如从界面点「重启」）时不计时；watchdog 重启服务时会写 stamp 重置计数。
+if (-not $NoWatch) {
+    $idleLimit = 3
+    $idleFallback = 300
+    $stampFile = Join-Path $env:TEMP 'pi-web-ui-restart.stamp'
+    $lastStamp = if (Test-Path $stampFile) { (Get-Item $stampFile).LastWriteTimeUtc } else { [datetime]::MinValue }
+    $idle = 0
+    $seen = $false
+    while ($true) {
+        if (Test-Path $stampFile) {
+            $st = (Get-Item $stampFile).LastWriteTimeUtc
+            if ($st -gt $lastStamp) { $lastStamp = $st; $idle = 0 }
+        }
+        $listen = Test-Port $webPort
+        $est = [bool](Get-NetTCPConnection -LocalPort $webPort -State Established -ErrorAction SilentlyContinue)
+        if (-not $listen) { $idle = 0 }
+        elseif ($est) { $idle = 0; $seen = $true }
+        else { $idle++ }
+        if ($seen) {
+            if ($idle -ge $idleLimit) {
+                $busy = $false
+                try {
+                    $busy = [bool](Invoke-RestMethod -Uri "http://127.0.0.1:$serverPort/plugins-api/piwork-tools/busy" -TimeoutSec 2 -ErrorAction Stop).busy
+                } catch { $busy = $false }
+                if ($busy) { $idle = 0 } else { break }
+            }
+        }
+        elseif ($idle -ge $idleFallback) { break }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host '页面已断开，正在停止开发环境（正式版 8787 不受影响）…'
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/stop" -Method Post -TimeoutSec 3 -ErrorAction Stop | Out-Null
+    } catch {
+        Get-NetTCPConnection -LocalPort $serverPort, $webPort -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    }
+    # 开发版不留常驻 watchdog：用户要求“关浏览器就全清”，所以连 8791 一起收掉。
+    # （正式版不同——它由桌面启动器长期托管，那个 watchdog 要留着；下次双击启动会自动重建本地的。）
+    Get-NetTCPConnection -LocalPort $watchdogPort -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Remove-Item $watchdogPidFile -Force -ErrorAction SilentlyContinue
+    Write-Host "开发环境已停止：前端 :$webPort 、后端 :$serverPort 、watchdog :$watchdogPort 全部释放。"
+}

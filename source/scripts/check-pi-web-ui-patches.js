@@ -48,6 +48,7 @@ const MARKERS = {
  * 它们仍保留在本表之外的文件里（旧版本 profile 还需要），但**不得再列入新版本 profile**。
  */
 const RETIRED = {
+	"patch-pi-web-ui-quick-phrase-queue.js": "0.94.1 起用上游内建的右键排队（chip 的 onContextMenu），自加的 ⏳ 按钮已移除（--remove 可清除已注入的）",
 	"patch-pi-web-ui-recovery-ui.js": "0.94.1 起不再注入：顶栏「重连」插件在断连时直连 watchdog（127.0.0.1:8790），能力已覆盖浮层（用户确认删除；可用 --remove 清除已注入的块）",
 	"patch-pi-web-ui-usage-cost.js": "0.94.1 起上游 serialize 自己下发 usageCost（缺省 undefined，与本补丁的 null 对插件等价）",
 	"patch-pi-web-ui-hide-forked-sessions.js": "0.94.1 起上游 agent-service 自己按 parentSessionPath 去重 fork 链尾",

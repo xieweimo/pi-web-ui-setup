@@ -32,8 +32,11 @@ if (!target) {
 	console.error("✗ 找不到 pi-web-ui 的 web/dist/assets/index-*.js");
 	process.exit(1);
 }
+/** 0.94.1 起上游已内建右键排队（chip 的 onContextMenu → send(e,true)），
+ *  我们额外挂的 ⏳ 按钮不再需要 —— 带 --remove 运行即把它从 bundle 里撤掉（反向替换，幂等）。 */
+const REMOVE = process.argv.includes("--remove");
 let source = fs.readFileSync(target, "utf8");
-if (source.includes(marker)) {
+if (source.includes(marker) && !REMOVE) {
 	console.log("✓ 快捷短语排队补丁已存在");
 	process.exit(0);
 }
@@ -76,6 +79,21 @@ const variants = [
 			"children:y.map(e=>(0,X.jsxs)(`span`,{className:`" + marker + "`,style:{display:`inline-flex`,alignItems:`center`,gap:`2px`},children:[(0,X.jsx)(`button`,{type:`button`,className:`quick-chip`,title:F(`quickPhrasesTip`,{text:e}),disabled:!Ye,onClick:()=>tt(e),children:e},`c`),(0,X.jsx)(`button`,{type:`button`,className:`quick-chip quick-chip-queue`,style:{padding:`0 6px`,fontSize:`11px`,opacity:.75},title:`排队发送：AI 回答完全结束后再发，不打断当前回合`,disabled:!Ye,onClick:()=>tt(e,!0),children:`⏳`},`q`)]},e))",
 	},
 ];
+
+// --remove：反向把已经加上的 ⏳ 换回上游原始 chip（幂等）
+if (REMOVE) {
+	const hit = variants.filter((v) => source.split(v.chipReplacement).length - 1 === 1);
+	if (!hit.length) {
+		console.log("✓ 未发现 ⏳ 按钮（无需移除）");
+		process.exit(0);
+	}
+	let out = source.replace(hit[0].chipReplacement, hit[0].chipNeedle);
+	if (hit[0].sendReplacement && out.includes(hit[0].sendReplacement)) out = out.replace(hit[0].sendReplacement, hit[0].sendNeedle);
+	fs.writeFileSync(target, out, "utf8");
+	console.log("✓ 已移除快捷短语右侧的 ⏳ 按钮（改用上游内建的右键排队）");
+	console.log(`  目标：${target}`);
+	process.exit(0);
+}
 
 const countOf = (needle) => source.split(needle).length - 1;
 /** 有的版本上游已内建排队（无需改发送函数），此时 sendNeedle 省略。 */

@@ -3,9 +3,8 @@
   "piWebUiVersion": "0.94.1",
   "patches": [
     "patches/patch-pi-web-ui-plugin-live-model.js",
-    "patches/patch-pi-web-ui-quick-phrase-queue.js",
     "patches/patch-pi-web-ui-topbar-menu-buttons.js",
     "patches/apply-stop-button.ps1"
   ],
-  "notes": "pi 0.86.1（pi-web-ui 0.94.1 自带的 SDK 副本，默认生效的那份）+ pi-web-ui 0.94.1。相对 pi-0.85.1_web-0.92.0 的变更：三项补丁退役（上游已内建等价能力）——usage-cost（上游 serialize 自己下发 usageCost）、hide-forked-sessions（上游按 parentSessionPath 去重 fork 链尾）、permanent-project-ignore（上游 client-state 自己维护全局 removedProjects 且打开即清 tombstone）；两项补丁改锚点——topbar-menu-buttons 的固定项集合改用结构正则（压缩变量名 $n → fr，写死名字会失效），quick-phrase-queue 增加 0.94.x 分支（上游 0.93.0 已内建右键排队，本补丁只额外挂 ⏳ 按钮，不再改发送函数）。另：断连浮层（patch-pi-web-ui-recovery-ui.js）自本版本起不再注入——顶栏「🔄 重连」插件在断连时会直连 watchdog（127.0.0.1:8790），能力已覆盖浮层，用户确认删掉；补丁文件保留（带 --remove 参数可清除已注入的块），但不再列入 profile。SDK 0.85.1→0.86.1 的破坏性变更已核查：user_bash 改为 fail-closed、自定义 provider 流式输入类型变化——本项目扩展未使用 user_bash，pi-subagents 0.70.1 已在 CHANGELOG 声明支持 Pi 0.86.1 并走 compat 层，无需适配。升级后必须重启服务以加载补丁后的服务端代码与新前端 bundle。"
+  "notes": "pi 0.86.1（pi-web-ui 0.94.1 自带的 SDK 副本，默认生效的那份）+ pi-web-ui 0.94.1。相对 pi-0.85.1_web-0.92.0 的变更：三项补丁退役（上游已内建等价能力）——usage-cost（上游 serialize 自己下发 usageCost）、hide-forked-sessions（上游按 parentSessionPath 去重 fork 链尾）、permanent-project-ignore（上游 client-state 自己维护全局 removedProjects 且打开即清 tombstone）；两项补丁改锚点——topbar-menu-buttons 的固定项集合改用结构正则（压缩变量名 $n → fr，写死名字会失效），quick-phrase-queue 已停用（上游 0.93.0 已内建右键排队，直接用上游的，不再额外挂 ⏳ 按钮）。另：断连浮层（patch-pi-web-ui-recovery-ui.js）自本版本起不再注入——顶栏「🔄 重连」插件在断连时会直连 watchdog（127.0.0.1:8790），能力已覆盖浮层，用户确认删掉；补丁文件保留（带 --remove 参数可清除已注入的块），但不再列入 profile。SDK 0.85.1→0.86.1 的破坏性变更已核查：user_bash 改为 fail-closed、自定义 provider 流式输入类型变化——本项目扩展未使用 user_bash，pi-subagents 0.70.1 已在 CHANGELOG 声明支持 Pi 0.86.1 并走 compat 层，无需适配。升级后必须重启服务以加载补丁后的服务端代码与新前端 bundle。"
 }
