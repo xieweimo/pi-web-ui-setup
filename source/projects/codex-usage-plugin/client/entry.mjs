@@ -189,6 +189,8 @@ export default {
 
 		/** 按设置隐藏 / 恢复原生成本项；React 重渲染会重建节点，所以每次同步都重应用。 */
 		function syncNativeCost() {
+			// 状态还没拿到时不要动：否则会先把原生成本项恢复出来，等状态到又隐藏，看起来就是一闪。
+			if (!state) return;
 			const item = findCostItem();
 			if (!item) return;
 			const shouldHide = Boolean(state?.hideNativeCost) && state?.statusBar !== false;
@@ -236,7 +238,14 @@ export default {
 				syncNativeCost();
 				return;
 			}
-			if (!state?.statusBar) {
+			// 状态还没拿到（初始化 / 切换会话的瞬间）：保持现状，不要把已经显示的那行抹掉。
+			// 旧写法是 `if (!state?.statusBar)`，state 为空也会走移除 —— 于是每次状态刷新都会闪一下。
+			if (!state) {
+				syncNativeCost();
+				return;
+			}
+			// 只有在设置里明确关掉「状态栏显示」时才移除。
+			if (state.statusBar === false) {
 				removeBar();
 				syncNativeCost();
 				return;
