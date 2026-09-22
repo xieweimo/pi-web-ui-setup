@@ -107,13 +107,14 @@ async function main() {
 		if (!data) throw new Error(`控制面板未渲染：${JSON.stringify(result)}`);
 		if (!data.services.length) throw new Error(`没有渲染出任何服务卡片；探测=${JSON.stringify(data)}`);
 		if (!data.buttons.includes("刷新并重新连接")) throw new Error("缺少「刷新并重新连接」");
-		if (!data.buttons.includes("完整重启全部服务")) throw new Error("缺少「完整重启全部服务」");
+		// 按钮文字按环境不同（开发版「完整重启全部服务」/ 用户版「完整重启网页服务」），只断言“有完整重启”。
+		if (!data.buttons.some((v) => /完整重启/.test(v))) throw new Error("缺少「完整重启」按钮");
 		if (!data.buttons.some((value) => /重启/.test(value))) throw new Error("服务卡片上没有重启按钮");
 		if (!data.matrix?.length) throw new Error("缺少影响范围对照表");
 		if (!data.impact?.length) throw new Error("服务卡片缺少「会重启什么/不动什么」说明");
 		const shot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
 		fs.writeFileSync(OUT, Buffer.from(shot.data, "base64"));
-		console.log(JSON.stringify({ ok: true, title: data.title, environment: data.environment, services: data.services, buttons: data.buttons, matrix: data.matrix, impact: data.impact, screenshot: OUT }, null, 2));
+		console.log(JSON.stringify({ ok: true, title: data.title, environment: data.environment, services: data.services, buttons: data.buttons, matrix: data.matrix, impact: data.impact, panelText: (data.text || "").slice(0, 700), screenshot: OUT }, null, 2));
 		socket.close();
 	} finally {
 		try {

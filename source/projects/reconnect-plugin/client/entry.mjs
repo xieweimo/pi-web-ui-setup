@@ -75,13 +75,38 @@ function injectStyle(doc) {
 	doc.head.appendChild(el);
 }
 
+/**
+ * 面板文案分两套：开发环境讲清“哪一层、会不会影响 HMR/watch”；
+ * 用户环境不提 Vite / node --watch 这类开发术语，只说“什么时候点、会不会丢东西”。
+ */
+const COPY = {
+	development: {
+		topLead: "同一个面板同时服务日常使用和代码开发。每项操作都写清会重启什么、不会动什么。",
+		tag: "开发者 / AI 改代码推荐使用",
+		title: "按需要重启哪一层",
+		lead: "改前端保存后通常自动热更新，改后端保存后 node --watch 会自动重启。只有它们没生效、或进程卡死时才手动重启。",
+		fullButton: "完整重启全部服务",
+		fullNote: "完整重启＝先停掉下面全部受管进程，再各自启动一个新的。浏览器页面会在恢复后自动刷新。",
+	},
+	user: {
+		topLead: "日常页面异常先点左边；需要重启网页服务时用右边。两个操作都不会删掉你的会话记录。",
+		tag: "需要手动重启时",
+		title: "重启网页服务",
+		lead: "界面卡住、页面打不开、或改过设置后一直不生效时，用这里的按钮。重启期间页面会短暂断开，服务恢复后会自动刷新回来。",
+		fullButton: "完整重启网页服务",
+		fullNote: "完整重启＝停止当前网页服务并重新启动。你的会话记录、历史对话和正在跑的任务都不会丢。",
+	},
+};
+
 /** 每个服务“什么时候该重启它”的说明。 */
-function whenToUse(service) {
+function whenToUse(service, profile) {
+	if (profile !== "development") return "页面打不开、操作没反应、或刚改过启动配置时";
 	if (service.kind === "frontend") return "改了 vite.config.ts、前端页面卡死、样式/依赖改了但没热更新时";
 	if (service.kind === "backend") return "改了 server/**、插件或依赖后 node --watch 没生效，或后端接口/WebSocket 卡死时";
 	return "该服务异常或改了它的启动配置时";
 }
-function restartScope(service) {
+function restartScope(service, profile) {
+	if (profile !== "development") return "重启整个网页服务（API、WebSocket、会话与界面）；会话记录与正在跑的任务都不受影响";
 	if (service.kind === "frontend") return "只重启浏览器开发页面与 HMR 服务；后端进程、会话与正在跑的任务都不动";
 	if (service.kind === "backend") return "只重启 API、WebSocket、会话与插件后端；Vite 前端进程和已打开的页面都不动";
 	return "只重启这一项服务，其他服务不动";
@@ -94,7 +119,7 @@ export default {
 		container.innerHTML = `
 <div class="rc">
 	<h2>🔄 连接与服务控制</h2>
-	<div class="rc-lead">同一个面板同时服务日常使用和代码开发。每项操作都写清会重启什么、不会动什么。</div>
+	<div class="rc-lead" data-role="top-lead">同一个面板同时服务日常使用和代码开发。每项操作都写清会重启什么、不会动什么。</div>
 	<div class="rc-env" data-role="env"><div><strong data-role="env-title">检测运行环境…</strong><br><small data-role="env-detail"></small></div><small data-role="phase"></small></div>
 	<div class="rc-warn" data-role="warn" hidden></div>
 	<div class="rc-status" data-role="status"><div class="rc-row"><span class="rc-dot"></span><span>读取服务状态…</span></div></div>
@@ -107,12 +132,12 @@ export default {
 			<div class="rc-note">只重新加载当前浏览器页面并重建 WebSocket。不会停任何进程，也不影响其他已打开的页面。</div>
 		</section>
 		<section class="rc-panel dev">
-			<span class="rc-tag">开发者 / AI 改代码推荐使用</span>
-			<h3>按需要重启哪一层</h3>
-			<p>改前端保存后通常自动热更新，改后端保存后 <code>node --watch</code> 会自动重启。只有它们没生效、或进程卡死时才手动重启。</p>
-			<div class="rc-actions"><button type="button" class="warning" data-global="restart">完整重启全部服务</button></div>
-			<div class="rc-note">完整重启＝先停掉下面全部受管进程，再各自启动一个新的。浏览器页面会在恢复后自动刷新。</div>
-			<table class="rc-table">
+			<span class="rc-tag" data-role="dev-tag">开发者 / AI 改代码推荐使用</span>
+			<h3 data-role="dev-title">按需要重启哪一层</h3>
+			<p data-role="dev-lead">改前端保存后通常自动热更新，改后端保存后 node --watch 会自动重启。只有它们没生效、或进程卡死时才手动重启。</p>
+			<div class="rc-actions"><button type="button" class="warning" data-global="restart" data-role="dev-restart">完整重启全部服务</button></div>
+			<div class="rc-note" data-role="dev-restart-note">完整重启＝先停掉下面全部受管进程，再各自启动一个新的。浏览器页面会在恢复后自动刷新。</div>
+			<table class="rc-table" data-role="dev-matrix">
 				<thead><tr><th>操作</th><th>前端</th><th>后端</th><th>当前页面</th></tr></thead>
 				<tbody data-role="matrix"></tbody>
 			</table>
@@ -170,7 +195,7 @@ export default {
 				body.appendChild(tr);
 			}
 		}
-		function renderServices(services) {
+		function renderServices(services, profile) {
 			const host = $('[data-role="services"]');
 			if (!host) return;
 			host.replaceChildren();
@@ -196,9 +221,9 @@ export default {
 				const others = services.filter((item) => item.id !== service.id)
 					.map((item) => `${item.label}${item.servicePort ? ` :${item.servicePort}` : ""}`).join("、");
 				for (const [key, text] of [
-					["重启范围", restartScope(service)],
+					["重启范围", restartScope(service, profile)],
 					["不动", others || "其他服务（当前环境只登记了这一项）"],
-					["何时用", whenToUse(service)],
+					["何时用", whenToUse(service, profile)],
 				]) {
 					const line = doc.createElement("div");
 					const k = doc.createElement("span"); k.className = "k"; k.textContent = key;
@@ -219,7 +244,7 @@ export default {
 					const button = doc.createElement("button");
 					button.type = "button"; button.textContent = label; button.className = cls;
 					button.dataset.service = id; button.dataset.action = action;
-					button.title = action === "restart" ? restartScope(service) : action === "start" ? `启动 ${service.label}，不影响其他服务` : `停止 ${service.label}（其他服务继续运行）`;
+					button.title = action === "restart" ? restartScope(service, profile) : action === "start" ? `启动 ${service.label}，不影响其他服务` : `停止 ${service.label}（其他服务继续运行）`;
 					button.disabled = busy || (action === "start" ? service.healthy : action === "stop" ? !service.healthy : false);
 					actions.appendChild(button);
 				}
@@ -245,6 +270,17 @@ export default {
 			const profile = next?.profile === "development" ? "development" : "user";
 			$('[data-role="env"]')?.classList.toggle("dev", profile === "development");
 			$('[data-role="env-title"]').textContent = profile === "development" ? "DEV · 源码开发环境" : (next?.label || "pi-web-ui 用户环境");
+			// 面板文案按环境切换：正式版不出现 HMR / node --watch 这类开发术语，也不展示只登记了一个服务时的对照表。
+			const copy = COPY[profile];
+			const setText = (role, value) => { const el = $(`[data-role="${role}"]`); if (el) el.textContent = value; };
+			setText("top-lead", copy.topLead);
+			setText("dev-tag", copy.tag);
+			setText("dev-title", copy.title);
+			setText("dev-lead", copy.lead);
+			setText("dev-restart", copy.fullButton);
+			setText("dev-restart-note", copy.fullNote);
+			const matrixTable = $('[data-role="dev-matrix"]');
+			if (matrixTable) matrixTable.hidden = profile !== "development";
 			const managed = next?.managedBy ? ` · 原管理器：${next.managedBy}` : "";
 			$('[data-role="env-detail"]').textContent = `${services.map((item) => `${item.label} :${item.servicePort || "?"}`).join(" · ")} · watchdog :${watchdogPort}${managed}`;
 			$('[data-role="phase"]').textContent = busy ? `正在${next.operation.action}：${next.operation.targets?.join(", ") || "全部"}` : `总状态：${next?.phase || "未知"}`;
@@ -275,7 +311,7 @@ export default {
 			renderMatrix(services);
 			const allRestart = $('[data-global="restart"]');
 			if (allRestart) allRestart.disabled = busy || !services.some((item) => item.actions?.includes("restart"));
-			renderServices(services);
+			renderServices(services, profile);
 			if (next?.lastError && !warned.length) setMessage(`最近一次操作失败：${next.lastError}`, true);
 		}
 		async function readState() {
