@@ -25,8 +25,15 @@ if (!fs.existsSync(target)) {
   console.error(`✗ 找不到 pi-web-ui 序列化文件：${target}`);
   process.exit(1);
 }
-const source = fs.readFileSync(target, "utf8");if (source.includes("usageCost: typeof m.usage?.cost?.total")) {
-  console.log("✓ usageCost 补丁已存在");
+const source = fs.readFileSync(target, "utf8");
+if (source.includes("usageCost: typeof m.usage?.cost?.total")) {
+  // 自 0.94.1 起上游自己在 serialize 里下发 usageCost（缺省值为 undefined，本补丁用的是
+  // null；对插件而言 Number(undefined) 与 Number(null) 都不可用，语义等价），因此本补丁
+  // 退役 —— 保留这段只为兼容 0.92.0 及更早的包。
+  const upstream = source.includes(": undefined,\n                stopReason");
+  console.log(upstream
+    ? "✓ 上游 0.94.1 已内建 usageCost，本补丁已退役（无需再打）"
+    : "✓ usageCost 补丁已存在");
   process.exit(0);
 }
 if (!source.includes(needle)) {

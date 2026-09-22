@@ -2,17 +2,20 @@
  * reconnect —— 断连恢复（独立插件）。
  *
  * 只做两件事，和「同步」插件完全无关：
- *   1. 报告本机重启守护（scripts/pi-web-ui-recovery-watchdog.js，监听 127.0.0.1:8788）是否就绪；
+ *   1. 报告本机重启守护（scripts/pi-web-ui-recovery-watchdog.js）是否就绪；
  *   2. 代理一次「重启网页服务」请求 —— 由服务端去 POST 守护进程的 /restart，
- *      浏览器不必跨源直连 8788，也不受 CORS 限制。
+ *      浏览器不必跨源直连守护端口，也不受 CORS 限制。
  *
- * 页面真的断连时用不了本插件（服务都连不上），那种情况由前端补丁
- * patches/patch-pi-web-ui-recovery-ui.js 注入的浮层兜底；本插件是「连着的时候主动重连/重启」的入口。
+ * 断连时本插件依然可用：客户端的状态查询与操作在走后端失败后会**直连 watchdog**
+ * （127.0.0.1:8790），所以“页面连不上后端”也能重启服务。
+ * 0.94.1 起不再注入前端断连浮层（patch-pi-web-ui-recovery-ui.js 已停用）——
+ * 浮层能做的两件事（重新连接 / 重启网页服务）本插件的顶栏视图都已覆盖。
  */
 import http from "node:http";
 
 const WATCHDOG_HOST = "127.0.0.1";
-const WATCHDOG_PORT = 8788;
+// 8790 避开上游 npm run dev 默认使用的 8788；启动器可通过环境变量改写。
+const WATCHDOG_PORT = Number(process.env.PI_WEB_UI_WATCHDOG_PORT || 8790);
 
 /** 探测 / 调用守护进程；永不抛错，失败回 {ok:false}。 */
 function callWatchdog(pathname, method = "GET", timeoutMs = 3000) {
@@ -25,8 +28,14 @@ function callWatchdog(pathname, method = "GET", timeoutMs = 3000) {
 			}
 		};
 		const req = http.request({ host: WATCHDOG_HOST, port: WATCHDOG_PORT, path: pathname, method, timeout: timeoutMs }, (res) => {
-			res.resume();
-			finish({ ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300, status: res.statusCode ?? 0 });
+			let body = "";
+			res.setEncoding("utf8");
+			res.on("data", (chunk) => { body += chunk; });
+			res.on("end", () => {
+				let data = {};
+				try { data = body ? JSON.parse(body) : {}; } catch { data = { error: body || `HTTP ${res.statusCode}` }; }
+				finish({ ...data, ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300 && data.ok !== false, status: res.statusCode ?? 0 });
+			});
 		});
 		req.on("timeout", () => {
 			req.destroy();
@@ -40,28 +49,33 @@ function callWatchdog(pathname, method = "GET", timeoutMs = 3000) {
 export default {
 	activate(host) {
 		host.route("GET", "/state", async (_req, res) => {
-			const probe = await callWatchdog("/", "GET");
+			const probe = await callWatchdog("/state", "GET");
 			res.json({
+				...probe,
 				ok: true,
-				// 服务端能响应，说明网页服务在线。
-				service: true,
-				// status 0 = 连不上守护进程（404 也算连得上）。
+				// 当前插件路由能响应，说明后端在线；watchdog 的 healthUrl 可能检查的是 Vite 前端。
+				backendOnline: true,
 				watchdog: probe.status !== 0,
 				watchdogStatus: probe.status,
 				watchdogError: probe.error ?? null,
+				watchdogPort: probe.watchdogPort || WATCHDOG_PORT,
 			});
 		});
 
-		host.route("POST", "/restart", async (_req, res) => {
-			const result = await callWatchdog("/restart", "POST", 5000);
+		const forward = (action) => async (_req, res) => {
+			const result = await callWatchdog(`/${action}`, "POST", 5000);
 			if (result.status === 0) {
 				return res.status(503).json({
 					ok: false,
-					error: "重启守护未运行：请关闭本页后重新运行「启动 Pi 网页版」（守护由启动器拉起）",
+					error: "重启守护未运行：请重新运行对应的 pi-web-ui 启动器",
 				});
 			}
-			res.json({ ok: true, watchdogStatus: result.status });
-		});
+			if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error || `${action} 失败` });
+			res.status(result.status || 202).json(result);
+		};
+		host.route("POST", "/restart", forward("restart"));
+		host.route("POST", "/start", forward("start"));
+		host.route("POST", "/stop", forward("stop"));
 
 		return () => {};
 	},

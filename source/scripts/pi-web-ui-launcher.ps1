@@ -7,6 +7,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $cwd       = Split-Path $PSScriptRoot -Parent                 # 工作目录（仓库迁移后自动适配）
 $shim      = Join-Path $env:APPDATA 'npm\pi-web-ui.cmd'      # pi-web-ui 启动命令（默认：npm 全局目录）
 $port      = 8787                                         # 服务端口
+$watchdogPort = 8790                                      # 独立守护端口（避开上游 npm run dev 的 8788）
 $idleLimit = 3                                            # 页面断开多少秒后停服（只需容忍刷新页面的重连空档）
 $idleFallback = 300                                       # 页面一次都没连上时的兜底秒数（浏览器起不来，别让服务长挂）
 $keepAliveWhileRunning = $true                            # 页面断开时若服务端还有任务在跑，先等它跑完再停服
@@ -67,33 +68,74 @@ if (Test-Path $resolveProxy) {
 # npm 升级会覆盖 pi-web-ui/dist；启动前幂等重打补丁，失败不阻断主服务。
 $usageCostPatch = Join-Path $cwd 'patches\patch-pi-web-ui-usage-cost.js'
 $liveModelPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-live-model.js'
-$recoveryUiPatch = Join-Path $cwd 'patches\patch-pi-web-ui-recovery-ui.js'
+# 断连浮层（recovery-ui）自 0.94.1 起不再注入：顶栏「重连」插件在断连时会直连
+# watchdog（127.0.0.1:8790），能力已覆盖浮层，用户确认删除。文件保留，需要清理已注入
+# 的块时手动跑 `node patches\patch-pi-web-ui-recovery-ui.js --remove`。
+# $recoveryUiPatch 已停用（旧版本包回退时可重新启用）。
 $hideForkedPatch = Join-Path $cwd 'patches\patch-pi-web-ui-hide-forked-sessions.js'
 $managedRecentProjectsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-permanent-project-ignore.js'
 $quickPhraseQueuePatch = Join-Path $cwd 'patches\patch-pi-web-ui-quick-phrase-queue.js'
 $topbarMenuButtonsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-topbar-menu-buttons.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
+$pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
 $stopButtonPatch = Join-Path $cwd 'patches\apply-stop-button.ps1'
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $recoveryUiPatch, $hideForkedPatch, $managedRecentProjectsPatch, $quickPhraseQueuePatch, $topbarMenuButtonsPatch)) {
+# usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
+# 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $quickPhraseQueuePatch, $topbarMenuButtonsPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
+}
+# reconnect 的 watchdog 端口与 descriptor 协议必须和启动器一致；启动时幂等更新插件副本。
+if ((Test-Path $pluginInstaller) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    & node $pluginInstaller --only reconnect | Out-Null
 }
 # 停止按钮样式属于静态网页资源；npm 升级覆盖后启动时幂等恢复。
 if (Test-Path $stopButtonPatch) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stopButtonPatch | Out-Null
 }
 
-# 独立守护端口：网页断连后仍可请求它重启 8787 服务。
-# 便携 Node 不在系统 PATH，优先用 install.json 里的绝对路径。
-if ((Test-Path $recoveryWatchdog) -and -not (Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue)) {
-    $nodeExe = if (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'node\node.exe')) {
-        Join-Path (Split-Path $PSScriptRoot -Parent) 'node\node.exe'
-    } else { 'node.exe' }
-    Start-Process -FilePath $nodeExe -ArgumentList $recoveryWatchdog -WindowStyle Hidden
+# 独立守护端口：网页断连后仍可请求它重启服务。
+# watchdog 只执行显式 restart descriptor，不猜测 CLI / npm / dev 等启动方式。
+# 当前启动器登记全局/便携 CLI；其他方式可直接给 watchdog 传自己的 descriptor。
+$nodeExe = if (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'node\node.exe')) {
+    Join-Path (Split-Path $PSScriptRoot -Parent) 'node\node.exe'
+} else { (Get-Command node.exe -ErrorAction SilentlyContinue).Source }
+$webEntry = Join-Path (Split-Path $shim) 'node_modules\pi-web-ui\bin\pi-web-ui.mjs'
+$descriptorFile = Join-Path $env:TEMP 'pi-web-ui-restart-descriptor.json'
+$env:PI_WEB_UI_WATCHDOG_PORT = [string]$watchdogPort
+if ($nodeExe -and (Test-Path $webEntry)) {
+    @{
+        command = $nodeExe
+        args = @($webEntry, '--no-browser', '--cwd', $cwd)
+        cwd = $cwd
+        label = 'pi-web-ui 用户环境'
+        profile = 'user'
+        actions = @('restart', 'start', 'stop')
+        servicePort = $port
+        healthUrl = "http://127.0.0.1:$port/"
+        watchdogPort = $watchdogPort
+        startupTimeoutMs = 60000
+        env = @{}
+        stop = @{ mode = 'process-tree'; portFallback = $true; allowUnowned = $false }
+    } | ConvertTo-Json -Depth 5 | Set-Content -Path $descriptorFile -Encoding UTF8
+    if ((Test-Path $recoveryWatchdog) -and -not (Get-NetTCPConnection -LocalPort $watchdogPort -State Listen -ErrorAction SilentlyContinue)) {
+        Start-Process -FilePath $nodeExe -ArgumentList @($recoveryWatchdog, '--descriptor', $descriptorFile) -WindowStyle Hidden
+        for ($i = 0; $i -lt 30; $i++) {
+            if (Get-NetTCPConnection -LocalPort $watchdogPort -State Listen -ErrorAction SilentlyContinue) { break }
+            Start-Sleep -Milliseconds 100
+        }
+    }
 }
 
-# 1. 仅在服务未运行时启动（避免重复实例）
+# 1. 仅在服务未运行时启动（避免重复实例）。通过 watchdog 启动后会记录根 PID，
+# 后续重启可终止 npm/concurrently/node --watch 在内的整棵进程树。
 if (-not (Test-Listening)) {
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $shim, '--no-browser', '--cwd', $cwd -WindowStyle Hidden | Out-Null
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/start" -Method Post -TimeoutSec 3 -ErrorAction Stop | Out-Null
+    } catch {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show('重启守护未能启动服务，请检查 restart descriptor。', 'pi-web-ui')
+        exit 1
+    }
 
     $ready = $false
     for ($i = 0; $i -lt $waitReady; $i++) {
@@ -144,6 +186,10 @@ while ($true) {
     Start-Sleep -Seconds 1
 }
 
-# 4. 停服
-Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-    ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+# 4. 停服。优先让 watchdog 清理整棵进程树与 PID 状态；不可用时才按端口兜底。
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/stop" -Method Post -TimeoutSec 3 -ErrorAction Stop | Out-Null
+} catch {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+}

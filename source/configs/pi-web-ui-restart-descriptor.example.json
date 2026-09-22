@@ -1,0 +1,44 @@
+{
+  "label": "pi-web-ui 源码开发环境",
+  "profile": "development",
+  "watchdogPort": 8791,
+  "primaryServiceId": "backend",
+  "cwd": "C:/path/to/pi-web-ui",
+  "startupTimeoutMs": 60000,
+  "env": {
+    "PI_WEB_DATA_DIR": "C:/path/to/dev-data"
+  },
+  "stop": {
+    "mode": "process-tree",
+    "portFallback": true,
+    "allowUnowned": false
+  },
+  "services": {
+    "backend": {
+      "label": "Node 后端",
+      "kind": "backend",
+      "description": "API、WebSocket、会话和插件服务",
+      "command": "node",
+      "args": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev:server"],
+      "servicePort": 8788,
+      "healthUrl": "http://localhost:8788/api/health",
+      "stdoutFile": "C:/path/to/logs/backend.out.log",
+      "stderrFile": "C:/path/to/logs/backend.err.log",
+      "actions": ["restart", "start", "stop"],
+      "order": 10
+    },
+    "frontend": {
+      "label": "Vite 前端",
+      "kind": "frontend",
+      "description": "开发页面与热更新服务",
+      "command": "node",
+      "args": ["C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js", "run", "dev:web"],
+      "servicePort": 5173,
+      "healthUrl": "http://localhost:5173/",
+      "stdoutFile": "C:/path/to/logs/frontend.out.log",
+      "stderrFile": "C:/path/to/logs/frontend.err.log",
+      "actions": ["restart", "start", "stop"],
+      "order": 20
+    }
+  }
+}

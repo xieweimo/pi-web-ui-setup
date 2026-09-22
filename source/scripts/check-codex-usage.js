@@ -54,6 +54,23 @@ const CDP_DIR = path.join(require("node:os").tmpdir(), `codex-usage-check-${proc
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 轮询等待首屏渲染完成（顶栏 + 状态栏就绪），返回实际等待毫秒数，超时返回 -1。
+ * 以前这里是写死的 sleep(9000)：页面早就加载完了还在白等。
+ */
+async function waitForRendered(send, timeoutMs) {
+	const t0 = Date.now();
+	while (Date.now() - t0 < timeoutMs) {
+		const r = await send("Runtime.evaluate", {
+			expression: `!!document.querySelector('.topbar-flow') && !!document.querySelector('.statusbar')`,
+			returnByValue: true,
+		});
+		if (r?.result?.value === true) return Date.now() - t0;
+		await sleep(150);
+	}
+	return -1;
+}
+
 async function main() {
 	const edge = EDGE_CANDIDATES.find((p) => fs.existsSync(p));
 	if (!edge) {
@@ -76,8 +93,8 @@ async function main() {
 	);
 
 	let target = null;
-	for (let i = 0; i < 40 && !target; i++) {
-		await sleep(500);
+	for (let i = 0; i < 120 && !target; i++) {
+		await sleep(150);
 		try {
 			const list = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`).then((r) => r.json());
 			target = list.find((t) => t.type === "page" && t.url.includes(String(PORT_WEB)));
@@ -132,19 +149,26 @@ async function main() {
 		console.log("插件热重载：", r?.result?.value);
 		await sleep(3000);
 		await send("Page.reload", { ignoreCache: true });
-		await sleep(7000);
+		const waited = await waitForRendered(send, 25000);
+		console.log(`渲染就绪：${waited >= 0 ? waited + "ms" : "超时"}`);
 	} else {
-		await sleep(9000);
+		const waited = await waitForRendered(send, 25000);
+		console.log(`渲染就绪：${waited >= 0 ? waited + "ms" : "超时"}`);
 	}
 
 	const probe = `(async () => {
+		// 插件状态栏可能比首屏晚一点注入，轮询 200ms×40（最多 8s），就绪即走。
 		for (let i = 0; i < 40; i++) {
 			if (document.getElementById('codex-usage-statusbar')) break;
-			await new Promise(r => setTimeout(r, 500));
+			await new Promise(r => setTimeout(r, 200));
 		}
 		const costItem = [...document.querySelectorAll('.statusbar .status-item')].find(n => /累计成本|Cumulative cost/i.test(n.getAttribute('title') || ''));
 		window.__piWebUiHost?.setView?.('plugin:codex-usage');
-		await new Promise(r => setTimeout(r, 1200));
+		// 等插件视图渲染出内容即可，不再固定等 1.2s。
+		for (let i = 0; i < 30; i++) {
+			if (document.querySelector('.cu-meta')) break;
+			await new Promise(r => setTimeout(r, 100));
+		}
 		return JSON.stringify({
 			pluginTab: [...document.querySelectorAll('.plugin-tab')].map(n => n.innerText.replace(/\\n/g, ' ')),
 			topbarItems: [...document.querySelectorAll('.topbar-flow > *')]
@@ -205,7 +229,7 @@ async function main() {
 			for (const line of data.barHtml.replace(/></g, ">\n<").split("\n")) console.log("  " + line);
 		}
 		const topbarText = (data.topbarItems || []).map(x => `${x.text} ${x.tip}`).join(' ');
-		const topbarOk = ['声音', '中文', '主题', 'v0.92.0', 'GitHub'].every(x => topbarText.includes(x));
+		const topbarOk = ['声音', '中文', '主题', 'v0.94.1', 'GitHub'].every(x => topbarText.includes(x));
 		const ok = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0 && topbarOk;
 		console.log("原生菜单项已提升到顶栏：", topbarOk);
 		console.log(ok ? "\n✓ 插件及顶栏按钮工作正常" : "\n✗ 自检未通过（看上面的空项）");

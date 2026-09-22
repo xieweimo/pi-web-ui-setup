@@ -70,6 +70,13 @@ if (source.includes(marker)) {
 	console.log("✓ 隐藏 fork 父会话补丁已存在");
 	process.exit(0);
 }
+// 自 0.94.1 起上游自己实现了完全等价的行为（server/agent-service.ts 里按 SDK 解析好的
+// info.parentSessionPath 建 forkedParentPaths 去重，连「全部被过滤时回退原列表」都一样），
+// 因此本补丁退役：只要探测到上游实现就视为成功，不再改动产物。
+if (source.includes("forkedParentPaths")) {
+	console.log("✓ 上游已内建 fork 链尾去重，本补丁自 0.94.1 起退役（无需再打）");
+	process.exit(0);
+}
 if (countOf(source, listNeedle) !== 1) {
 	console.error("✗ pi-web-ui 版本的目标代码已变化，未应用 hide-forked-sessions 补丁");
 	process.exit(2);

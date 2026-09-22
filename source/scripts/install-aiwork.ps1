@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $templateFile = Join-Path $root 'configs\pi-settings.template.json'
 $agentDir = Join-Path $env:USERPROFILE '.pi\agent'
-if (-not $SkipNpmInstall) { npm install -g '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.92.0' }
+if (-not $SkipNpmInstall) { npm install -g '@earendil-works/pi-coding-agent@0.85.1' 'pi-web-ui@0.94.1' }
 if (-not (Get-Command pi -ErrorAction SilentlyContinue) -or -not (Get-Command pi-web-ui -ErrorAction SilentlyContinue)) { throw 'pi or pi-web-ui was not found.' }
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
 $template = Get-Content $templateFile -Raw -Encoding UTF8 | ConvertFrom-Json

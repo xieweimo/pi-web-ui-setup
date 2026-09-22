@@ -1,0 +1,11 @@
+{
+  "piVersion": "0.85.1",
+  "piWebUiVersion": "0.94.1",
+  "patches": [
+    "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-quick-phrase-queue.js",
+    "patches/patch-pi-web-ui-topbar-menu-buttons.js",
+    "patches/apply-stop-button.ps1"
+  ],
+  "notes": "兼容档：pi 0.85.1 + pi-web-ui 0.94.1。仅当服务端改用祖先链上那份 SDK（PI_WEB_SDK=global）时才会被选中；默认走 pi-0.86.1_web-0.94.1.json（pi-web-ui 自带副本 0.86.1）。补丁清单与 0.86.1 那份一致：usage-cost / hide-forked-sessions / permanent-project-ignore 三项已退役（上游 0.93/0.94 内建），recovery-ui（断连浮层）自 0.94.1 起删除（顶栏重连插件已覆盖），topbar-menu-buttons 与 quick-phrase-queue 已按 0.94.x 重新适配锚点。"
+}

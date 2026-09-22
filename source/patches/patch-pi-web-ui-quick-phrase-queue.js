@@ -55,6 +55,16 @@ const variants = [
 			"children:F.map(y=>s.jsxs(\"span\",{className:\"" + marker + "\",style:{display:\"inline-flex\",alignItems:\"center\",gap:\"2px\"},children:[s.jsx(\"button\",{type:\"button\",className:\"quick-chip\",title:J(\"quickPhrasesTip\",{text:y}),disabled:!Se,onClick:()=>se(y),children:y},\"c\"),s.jsx(\"button\",{type:\"button\",className:\"quick-chip quick-chip-queue\",style:{padding:\"0 6px\",fontSize:\"11px\",opacity:.75},title:\"排队发送：AI 回答完全结束后再发，不打断当前回合\",disabled:!Se,onClick:()=>se(y,!0),children:\"⏳\"},\"q\")]},y))",
 	},
 	{
+		// 0.94.x：上游 0.93.0 已内建排队发送（chip 的 onContextMenu → send(e,true)，
+		// 文案 quickPhrasesSendTip）——所以这里不再需要改发送函数，只额外挂一个显眼的
+		// ⏳ 按钮（鼠标用户不必去猜右键）。
+		name: "0.94.x",
+		chipNeedle:
+			"children:y.map(e=>(0,X.jsx)(`button`,{type:`button`,className:`quick-chip`,title:`${F(`quickPhrasesTip`,{text:e})}（${F(`quickPhrasesSendTip`)}）`,disabled:!Xe,onClick:()=>nt(e),onContextMenu:t=>{t.preventDefault(),t.stopPropagation(),nt(e,!0)},children:e},e))",
+		chipReplacement:
+			"children:y.map(e=>(0,X.jsxs)(`span`,{className:`" + marker + "`,style:{display:`inline-flex`,alignItems:`center`,gap:`2px`},children:[(0,X.jsx)(`button`,{type:`button`,className:`quick-chip`,title:`${F(`quickPhrasesTip`,{text:e})}（${F(`quickPhrasesSendTip`)}）`,disabled:!Xe,onClick:()=>nt(e),onContextMenu:t=>{t.preventDefault(),t.stopPropagation(),nt(e,!0)},children:e},`c`),(0,X.jsx)(`button`,{type:`button`,className:`quick-chip quick-chip-queue`,style:{padding:`0 6px`,fontSize:`11px`,opacity:.75},title:`排队发送：AI 回答完全结束后再发，不打断当前回合`,disabled:!Xe,onClick:()=>nt(e,!0),children:`⏳`},`q`)]},e))",
+	},
+	{
 		name: "0.92.x",
 		sendNeedle:
 			"tt=e=>{let t=e.trim();if(t){if(!Ye){m(`error`,F(`netDisconnected`));return}if($({type:`prompt`,text:t,attachments:$e()})){t&&Nd(t),",
@@ -68,7 +78,9 @@ const variants = [
 ];
 
 const countOf = (needle) => source.split(needle).length - 1;
-const matched = variants.filter((v) => countOf(v.sendNeedle) === 1 && countOf(v.chipNeedle) === 1);
+/** 有的版本上游已内建排队（无需改发送函数），此时 sendNeedle 省略。 */
+const hitOnce = (needle) => !needle || countOf(needle) === 1;
+const matched = variants.filter((v) => hitOnce(v.sendNeedle) && hitOnce(v.chipNeedle));
 if (matched.length !== 1) {
 	console.error(
 		`✗ pi-web-ui 版本的目标代码已变化，未应用快捷短语排队补丁（匹配版本数 ${matched.length}）`,
@@ -76,7 +88,8 @@ if (matched.length !== 1) {
 	process.exit(2);
 }
 const variant = matched[0];
-source = source.replace(variant.sendNeedle, variant.sendReplacement).replace(variant.chipNeedle, variant.chipReplacement);
+if (variant.sendNeedle) source = source.replace(variant.sendNeedle, variant.sendReplacement);
+source = source.replace(variant.chipNeedle, variant.chipReplacement);
 fs.writeFileSync(target, source, "utf8");
 console.log("✓ 已应用快捷短语排队补丁（短语右侧新增 ⏳ 按钮）");
 console.log(`  目标：${target}`);

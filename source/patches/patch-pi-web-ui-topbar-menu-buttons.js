@@ -40,18 +40,21 @@ const replacement =
 	"{id:`host:browser`,slot:`topbar.primary`,labelKey:`browserControl`,icon:`browser`,kind:`action`,order:41,group:`tools`,align:`end`},{id:`host:tasks`" +
 	",slot:`topbar.primary`,labelKey:`bgTasks`,icon:`layers`,kind:`action`,order:42,group:`tools`,align:`end`},{id:`host:settings`,slot:`topbar.primary`,labelKey:`settingsTitle`,icon:`settings`,kind:`action`,order:60,group:`system`,align:`end`},{id:`host:sound`,slot:`topbar.primary`,labelKey:`sound`,icon:`sound`,kind:`action`,order:70,group:`system`,align:`end`},{id:`host:language`,slot:`topbar.primary`,labelKey:`language`,icon:`globe`,kind:`action`,order:80,group:`system`,align:`end`},{id:`host:theme`,slot:`topbar.primary`,labelKey:`theme`,icon:`sun`,kind:`action`,order:82,group:`system`,align:`end`},{id:`host:update`,slot:`topbar.primary`,labelKey:`update`,icon:`download`,kind:`action`,order:90,group:`system`,align:`end`},{id:`host:github`,slot:`topbar.primary`,labelKey:`githubRepo`,icon:`github`,kind:`action`,order:200,group:`system`,align:`end`}/*" + marker + "*/";
 
-const pinnedNeedle = "$n=new Set([`host:settings`]);";
-const pinnedReplacement = "$n=new Set([`host:settings`,`host:browser`,`host:sound`,`host:language`,`host:theme`,`host:update`,`host:github`]);";
+// 固定项集合的变量名会被压缩重命名（0.92.0 是 `$n`，0.94.1 是 `fr`），
+// 所以这里只认结构不认名字：<var>=new Set([`host:settings`]);
+const pinnedRe = /([A-Za-z_$][\w$]*)=new Set\(\[`host:settings`\]\);/g;
+const pinnedHits = [...source.matchAll(pinnedRe)];
 const count = source.split(needle).length - 1;
-const pinnedCount = source.split(pinnedNeedle).length - 1;
-if (count !== 1 || pinnedCount !== 1) {
+if (count !== 1 || pinnedHits.length !== 1) {
 	console.error(
-		`✗ pi-web-ui 目标代码已变化，未应用原生菜单项顶栏按钮补丁（注册表命中 ${count} 次，固定项命中 ${pinnedCount} 次）`,
+		`✗ pi-web-ui 目标代码已变化，未应用原生菜单项顶栏按钮补丁（注册表命中 ${count} 次，固定项命中 ${pinnedHits.length} 次）`,
 	);
 	process.exit(2);
 }
 
-source = source.replace(needle, replacement).replace(pinnedNeedle, pinnedReplacement);
+source = source
+	.replace(needle, replacement)
+	.replace(pinnedRe, "$1=new Set([`host:settings`,`host:browser`,`host:sound`,`host:language`,`host:theme`,`host:update`,`host:github`]);");
 fs.writeFileSync(target, source, "utf8");
 console.log("✓ 已将运行位置、声音、语言、主题、版本和 GitHub 恢复为顶部独立按钮");
 console.log(`  目标：${target}`);

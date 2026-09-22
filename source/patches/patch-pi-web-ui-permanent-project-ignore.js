@@ -57,6 +57,13 @@ function one(source, needle, replacement, label) {
 if (!target || !fs.existsSync(target)) { console.error("✗ 找不到 client-state.js"); process.exit(2); }
 let source = fs.readFileSync(target, "utf8");
 if (source.includes(marker)) { console.log("✓ 最近项目用户操作补丁已存在"); process.exit(0); }
+// 自 0.94.1 起上游自己实现了同样（甚至更彻底）的语义：removeProject 写 removedProjects，
+// getRemovedProjects 合并全局名单，remember() 遍历所有 client 清除 tombstone。
+// 因此本补丁退役：探测到上游实现即视为成功，不再改动产物。
+if (source.includes("clears its removal tombstone")) {
+	console.log("✓ 上游已内建最近项目删除/恢复语义，本补丁自 0.94.1 起退役（无需再打）");
+	process.exit(0);
+}
 try {
     source = one(source, baseRemember, nextRemember, "remember");
     source = one(source, baseRemove, nextRemove, "removeProject");
