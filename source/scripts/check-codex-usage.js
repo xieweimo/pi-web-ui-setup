@@ -180,10 +180,12 @@ async function main() {
 				})),
 			statusBarSummary: document.getElementById('codex-usage-statusbar')?.textContent ?? null,
 			// 官方 bottombar 槽位渲染出来的条目（0.90.0+）：宿主把 badge 类条目渲染成
-			// <button class="status-action">，靠 title 里的中文描述认出来。
+			// <button class="status-action">，靠 title/text 里的订阅、成本、⚡ 前缀认出来。
+			// 2026-09-25 起状态栏跟随当前 provider：Codex 显示窗口百分比，其他订阅显示
+			// ⚡ provider 名，按量显示 ¥金额，所以匹配必须覆盖全部计费形态。
 			slotBar: (() => {
 				const btn = [...document.querySelectorAll('.statusbar .status-action')]
-					.find(n => /订阅额度|按量成本|Codex 订阅|5h\\s*已用|每周\\s*已用/.test((n.getAttribute('title') || '') + ' ' + (n.textContent || '')));
+					.find(n => /订阅|额度|成本|已识别|⚡|¥/.test((n.getAttribute('title') || '') + ' ' + (n.textContent || '')));
 				if (!btn) return null;
 				const style = getComputedStyle(btn);
 				return {
@@ -243,7 +245,12 @@ async function main() {
 		const hasVersionButton = /\bv\d+\.\d+\.\d+\b/.test(topbarText);
 		const topbarOk = ['声音', '中文', '主题', 'GitHub'].every(x => topbarText.includes(x)) && hasVersionButton;
 		const barPinned = !data.slotBar || (data.slotBar.flexShrink === "0" && data.slotBar.whiteSpace === "nowrap");
-		passed = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0 && topbarOk && barPinned;
+		const pluginText = data.pluginTab.join(" ");
+		const activePluginsOk = ["额度", "同步", "重连"].every((name) => pluginText.includes(name));
+		const quickAskRetired = !/临时问问|Quick Ask/i.test(pluginText);
+		passed = Boolean(data.statusBarSummary || data.slotBar) && activePluginsOk && quickAskRetired && topbarOk && barPinned;
+		console.log("三个现役插件入口正常：", activePluginsOk);
+		console.log("临时问问已退役：", quickAskRetired);
 		console.log("原生菜单项已提升到顶栏：", topbarOk);
 		console.log(passed ? "\n✓ 插件及顶栏按钮工作正常" : "\n✗ 自检未通过（看上面的空项）");
 	}

@@ -42,7 +42,7 @@ foreach ($seed in $seedFiles) {
     else { Copy-Item $srcFile $dstFile -Force; Write-Host ('  已写入 ' + $seed.label + ' -> ' + $dstFile) }
 }
 
-# 界面插件（codex-usage 额度/成本、piwork-tools 同步、quick-ask 临时问问、reconnect 重连）：拷进 <dataDir>/plugins/，
+# 界面插件（codex-usage 额度/成本、piwork-tools 同步、reconnect 重连）：拷进 <dataDir>/plugins/，
 # 与 pi-web-ui 包目录分离，npm 升级不会动它们。
 node (Join-Path $root 'scripts\install-plugins.js')
 

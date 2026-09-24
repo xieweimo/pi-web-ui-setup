@@ -1,10 +1,10 @@
 {
 	"id": "codex-usage",
-	"name": "额度",
+	"name": "额度与成本",
 	"icon": "⚡",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"apiVersion": 2,
-	"description": "订阅额度 / 成本显示：ChatGPT(Codex) 订阅显示 5h 与每周窗口用量、重置倒计时、可用 reset 次数；非订阅模型显示人民币成本（实时汇率）",
+	"description": "通用模型额度与成本：Codex 等订阅调用排除理论 API 价；按量、积分与未知计费 provider 按会话账本汇总美元/人民币成本，并支持自定义计费模式。",
 	"permissions": [
 		"http",
 		"ui"
@@ -14,7 +14,7 @@
 			{
 				"id": "__view",
 				"label": "额度",
-				"labelEn": "Usage",
+				"labelEn": "Usage & Billing",
 				"icon": "⚡",
 				"kind": "view",
 				"view": "plugin:codex-usage",
@@ -46,10 +46,31 @@
 			"default": "auto",
 			"options": [
 				"auto",
-				"codex",
+				"subscription",
 				"cost"
 			],
-			"hint": "auto=按当前会话模型自动判断（Codex 订阅走额度，其余走人民币成本）"
+			"hint": "auto=按 provider/model 的计费配置判断；subscription=强制当前模型按订阅；cost=强制显示会话按量成本"
+		},
+		{
+			"key": "defaultBillingMode",
+			"type": "select",
+			"label": "默认计费方式",
+			"default": "unknown",
+			"options": [
+				"metered",
+				"prepaid",
+				"free",
+				"hybrid",
+				"unknown"
+			],
+			"hint": "自动识别没有足够证据时使用此模式；unknown 最安全，不会把中转站目录价冒充真实账单"
+		},
+		{
+			"key": "billingOverrides",
+			"type": "text",
+			"label": "Provider 计费方式覆盖",
+			"default": "",
+			"hint": "JSON 或逗号格式。模式：subscription / metered / prepaid / free / hybrid / unknown；支持 provider/model 精确配置，也支持对象写法附 label/note"
 		},
 		{
 			"key": "rateSource",

@@ -1,74 +1,182 @@
-# ⚡ codex-usage —— 订阅额度 / 成本显示
+# ⚡ 模型额度与成本（codex-usage）
 
-pi-web-ui 界面插件：把「当前到底花了多少额度」放在一眼能看到的地方。
+pi-web-ui 通用计费面板：统一显示订阅额度、API 按量成本、预付积分消耗、免费/本地调用、混合计费和无法确认的中转站目录价。
 
-- **ChatGPT / Codex 订阅**：显示 5 小时窗口与每周窗口的已用百分比、重置倒计时、
-  可用 banked reset 次数、套餐类型（plus / pro …）。
-- **非订阅（按量计费的 API key）**：显示当前会话中、当前选中 provider（如 `deepseek`）
-  从创建至今的完整累计成本（人民币、实时汇率）；上下文压缩不会让金额归零，也不会混入
-  Codex 或其他 provider 的成本。
-- 两者按**当前会话实际选择的模型**自动切换（auto 模式）。
+插件 id 为兼容已有安装仍保留 `codex-usage`，界面名称已经改为「额度与成本」。
 
-## 界面上的两个位置
+## 支持的计费模式
 
-| 位置 | 内容 |
-| --- | --- |
-| 底部状态栏（默认开启） | 一行摘要：`⚡ 5h 24% · 7d 4%` 或 `⚡ ¥8.30`，鼠标悬停看详细信息，点击跳到本插件的 tab |
-| 顶栏 ⚡ 标签 | 完整卡片：每个窗口的进度条、重置时间、reset 次数、汇率与刷新来源 |
+| 模式 | 含义 | 显示方式 |
+|---|---|---|
+| `subscription` | 包月/包年订阅 | 排除理论 API 目录价；有 adapter 时显示额度窗口 |
+| `metered` | 官方 API key 按 token / 请求付费 | 显示会话成本估算（USD + CNY） |
+| `prepaid` | 预充值积分/余额、中转余额 | 显示按模型目录价计算的消耗估算 |
+| `free` | 本地模型或明确免费的服务 | 排除目录价，标记为免费 |
+| `hybrid` | 订阅包含额度、超额另收费 | 显示混合计费估算，提醒需结合服务商账单 |
+| `unknown` | 中转站或无法确认结算关系 | 显示“未确认目录价”，绝不冒充真实扣款 |
 
-pi-web-ui 0.90.0+ 使用官方 `bottombar` 槽位渲染状态栏摘要；旧版宿主自动降级到 DOM 注入。
-插件额外防止状态栏条目在流式回复时被 flex 压缩到不可见。
+## 自动识别顺序
 
-## 数据来源
+从高到低：
 
-| 数据 | 来源 |
-| --- | --- |
-| 订阅额度 | `GET https://chatgpt.com/backend-api/wham/usage`（Codex CLI `/status` 背后的同一份数据），凭证取自 `<agentDir>/auth.json` 的 `openai-codex` |
-| 会话成本 | `<agentDir>/sessions/**/*.jsonl` 当前对话的完整活动分支；只累计当前选中 provider 的 `usage.cost.total`（美元），包含压缩前消息与同 provider 的压缩/摘要调用 |
-| 汇率 | `https://open.er-api.com/v6/latest/USD` → `rates.CNY`，缓存 12 小时（免费、无需 key） |
+1. `provider/model` 精确用户规则；
+2. provider 用户规则；
+3. 内置订阅/余额 adapter；
+4. 已知产品特征（Codex、Coding Plan 路径、OpenRouter）；
+5. `auth.json` 的认证类型（OAuth = 订阅/套餐，API key = 按量线索）；
+6. `models-store.json` 的 `baseUrl` 是否为官方 API endpoint；
+7. 主流按量厂商名（仅在无 baseUrl 反证时）；
+8. 无法证明时归 `unknown`。
+
+## 内置识别清单
+
+### 官方按量 endpoint（API key，高置信度 `metered`）
+
+| 厂商 | endpoint |
+|---|---|
+| OpenAI | `api.openai.com` |
+| Anthropic | `api.anthropic.com` |
+| Google | `generativelanguage.googleapis.com` / `aiplatform.googleapis.com` |
+| DeepSeek | `api.deepseek.com` |
+| Kimi / Moonshot | `api.moonshot.cn` / `api.moonshot.ai` / `api.kimi.com` |
+| 智谱 GLM（普通 API） | `open.bigmodel.cn`（非 `/coding/` 路径） |
+| 通义 Qwen | `dashscope.aliyuncs.com`（含国际站） |
+| 豆包 / 火山方舟 | `ark.cn-beijing.volces.com` / `ark.ap-southeast.volces.com` |
+| MiniMax | `api.minimax.chat` / `api.minimaxi.com` |
+| 零一万物 / 阶跃 / 百川 | `api.lingyiwanwu.com` / `api.stepfun.com` / `open.baichuan-ai.com` |
+| 百度千帆 / 腾讯混元 | `aip.baidubce.com` / `qianfan.baidubce.com` / `hunyuan.tencentcloudapi.com` |
+| SiliconFlow | `api.siliconflow.cn` / `api.siliconflow.com` |
+| Mistral / xAI / Cohere | `api.mistral.ai` / `api.x.ai` / `api.cohere.com` |
+| Groq / Perplexity | `api.groq.com` / `api.perplexity.ai` |
+| Together / Fireworks / Cerebras / Novita | 对应官方域名 |
+
+### 订阅 / 套餐（`subscription`）
+
+| 特征 | 例子 | 置信度 |
+|---|---|---|
+| 内置额度 adapter | `openai-codex`（真实读取 5h/每周窗口） | high |
+| baseUrl 含 `/coding/` 路径 | GLM Coding Plan、Kimi for Coding | medium |
+| provider 名含 `coding-plan` | 各厂商 Coding Plan | medium |
+| OAuth 登录 | Claude Code / Claude Max、Gemini CLI、Qwen OAuth | medium |
+
+### 预付积分（`prepaid`）
+
+- `openrouter.ai` endpoint 或 provider 名 `openrouter`（OpenRouter credits）。
+
+### 免费 / 本地（`free`）
+
+- `localhost` / `127.0.0.1` / `::1` 且无任何凭证（Ollama、LM Studio 等）。
+
+### 厂商名白名单（中置信度）
+
+openai、anthropic、google、deepseek、mistral、xai、cohere、groq、perplexity、together、fireworks、moonshot、kimi、zai、zhipu、qwen、dashscope、minimax、doubao、volcengine、siliconflow、novita、cerebras 等——仅在**没有 baseUrl 反证**（即没有挂到自定义域名）时生效，避免把中转站误判成官方按量。
+
+### 不自动判定的情况
+
+- API key + 自定义域名（中转站）：`unknown / 未确认目录价`；
+- 官方厂商名挂在中转域名下：同样 `unknown`，名字不作为证据；
+- 其他未收录域名：`unknown`，可通过 `billingOverrides` 手工指定。
+
+中转站即使伪装成 OpenAI-compatible API，也不会仅凭模型名字认定为官方按量计费。
+
+## 当前内置 adapter
+
+### ChatGPT / Codex
+
+- provider：`openai-codex`
+- OAuth 凭证：`<agentDir>/auth.json`
+- 用量接口：`GET https://chatgpt.com/backend-api/wham/usage`
+- 显示 5 小时 / 每周窗口、重置倒计时、套餐与可用 reset。
+
+### 通用订阅
+
+其他 provider 可以通过规则标记为 `subscription`。插件会正确排除其理论 API 目录价；如果厂商没有稳定可读取的额度 API，则显示“已识别为订阅模式，暂无额度查询 adapter”。
+
+后续增加厂商额度接口时，只需增加 adapter，不需要改会话成本账本。
+
+## 通用会话账本
+
+插件读取当前会话 JSONL 的活动分支，按 provider 汇总：
+
+- assistant 回复的 `usage.cost.total`；
+- compaction、branch summary 与其他有 usage 的辅助调用；
+- 压缩前消息仍保留，不会因为上下文压缩归零；
+- fork 废弃分支不计入；
+- 订阅/免费调用的目录价单独展示并排除；
+- 按量、预付、混合、未知调用分别标注。
+
+`usage.cost.total` 是按模型价格表计算的目录价，不一定等于服务商最终账单。只有厂商账单/余额 adapter 才能称为真实扣款。
+
+## Provider 规则配置
+
+设置 → 界面插件 → `codex-usage` →「Provider 计费方式覆盖」。
+
+### 简写
+
+```text
+anthropic=subscription,openrouter=prepaid,my-relay=unknown
+```
+
+### JSON（推荐）
+
+```json
+{
+  "anthropic": {
+    "mode": "subscription",
+    "label": "Claude Max",
+    "note": "个人 Max 订阅，不计理论 API 目录价"
+  },
+  "openrouter": {
+    "mode": "prepaid",
+    "label": "OpenRouter 余额"
+  },
+  "my-relay/gpt-4.1": {
+    "mode": "hybrid",
+    "label": "公司中转套餐",
+    "note": "每月含额度，超额另付"
+  }
+}
+```
+
+精确 `provider/model` 规则优先于 provider 规则。
+
+## 界面
+
+- 顶栏「⚡ 额度」：总金额、当前模型计费识别、provider 明细与订阅窗口；
+- 底部状态栏：订阅显示窗口百分比，其他模式显示人民币估算；
+- Provider 明细会显示计费模式、识别来源、置信度、endpoint 与备注。
 
 ## 设置项
 
-设置面板（⚙）→「界面插件」→ codex-usage：
-
 | 键 | 默认 | 说明 |
-| --- | --- | --- |
-| `mode` | `auto` | `auto` 跟随当前模型；`codex` 强制显示订阅额度；`cost` 强制显示人民币成本 |
-| `rateSource` | `live` | `live` 抓实时汇率；`fixed` 用固定汇率 |
-| `fixedRate` | `7.2` | 固定汇率（1 USD = ? CNY） |
-| `refreshSec` | `60` | 轮询间隔；每轮对话结束、切换会话、附加客户端时也会刷新 |
-| `statusBar` | `true` | 是否在底部状态栏注入摘要 |
-| `proxy` | 空 | 留空 = 依次读 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量与 `<agentDir>/settings.json` 的 `httpProxy` |
+|---|---|---|
+| `mode` | `auto` | 自动识别；也可强制当前模型按订阅或成本显示 |
+| `defaultBillingMode` | `unknown` | 无法识别时的默认方式；建议保持 unknown |
+| `billingOverrides` | 空 | provider / model 计费规则 |
+| `rateSource` | `live` | 实时汇率或固定汇率 |
+| `fixedRate` | `7.2` | 1 USD 对应人民币 |
+| `refreshSec` | `60` | 刷新间隔 |
+| `statusBar` | `true` | 是否显示底部摘要 |
+| `hideNativeCost` | `true` | 隐藏宿主原生美元总成本 |
+| `proxy` | 空 | 用量和汇率接口代理；留空继承环境/pi 设置 |
+| `inheritProxy` | `true` | 为服务进程配置代理兼容 |
 
-## 隐私与安全
+## 隐私
 
-- **只读** `<agentDir>/auth.json`，从不写入，也不打印 token；OAuth access token 只用于
-  请求用量接口，不进入日志、不广播给前端。
-- 为避免上下文压缩后成本归零，按 `conversationId` 只读对应的会话 JSONL；解析后只使用
-  条目父子关系、provider 与 `usage.cost.total`，不存储或广播消息正文。
-- 广播给前端的数据只含：窗口百分比、重置时间、reset 次数、套餐类型、脱敏邮箱
-  （`xi***@gmail.com`）与会话成本摘要。
-- 本插件不注册 AI 工具，也不读取工作区源码文件。
+- 不上传对话正文；
+- 只从会话 JSONL 读取 provider、model、父子关系和 usage cost；
+- OAuth token 不写日志、不广播到前端；
+- 前端只收到汇总金额、额度窗口、脱敏邮箱和计费识别信息；
+- 不注册 AI 工具，不修改工作区文件。
 
-## 故障排查
-
-| 现象 | 原因 / 处理 |
-| --- | --- |
-| 显示「凭证已过期（HTTP 401）」 | 在 pi（CLI 或 web）里正常用一次 Codex 模型，或重新 `/login`，SDK 会刷新 auth.json |
-| 显示「账号/地区不被允许（HTTP 403）」 | 代理出口地区不受支持；换节点（JP/SG/KR/US）后刷新 |
-| 显示「代理连接超时」 | 代理没开或端口变了；检查 `HTTPS_PROXY` 与 `<agentDir>/settings.json` 的 `httpProxy` |
-| 状态栏没出现摘要 | pi-web-ui 版本改了状态栏结构；关掉 `statusBar` 设置，改用 ⚡ 标签查看 |
-| 想让它重新加载代码 | 设置 →「界面插件」→ 重载（或重启 pi-web-ui 服务）后刷新浏览器 |
-
-## 开发
+## 测试
 
 ```bash
-# 本地跑一遍两条数据线（会真实请求用量与汇率接口，只读不消耗额度）
+node projects/codex-usage-plugin/tests/billing-profile.test.mjs
 node projects/codex-usage-plugin/tests/manual-test.mjs
-
-# 部署到数据目录（只装这一个插件）
 node scripts/install-plugins.js --only codex-usage
+node scripts/check-codex-usage.js --reload
 ```
 
-源码维护在 `PIwork/projects/codex-usage-plugin/`，部署脚本只做复制——**升级 pi-web-ui
-不会覆盖插件目录**，无需重打补丁。
+手工测试覆盖：Codex 订阅、多 provider API 按量、非 Codex 订阅、预付积分中转和未知 provider。
+识别引擎单元测试注入认证与 endpoint 元数据，覆盖全部官方 endpoint、订阅特征、中转反证和规则优先级，不依赖本机真实配置。

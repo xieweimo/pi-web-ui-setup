@@ -80,7 +80,7 @@ function barText(state, now) {
 		bits.push(`${windowLabel(w)} ${pct(w.usedPercent)}`);
 	}
 	if (state.resets > 0) bits.push(`${state.resets} reset`);
-	if (!bits.length) return "⚡ Codex";
+	if (!bits.length) return `⚡ ${state.provider || state.model?.provider || "订阅"}`;
 	void now;
 	return `⚡ ${bits.join(" · ")}`;
 }
@@ -89,11 +89,11 @@ function barTitle(state) {
 	if (!state) return "订阅额度 / 成本";
 	if (state.kind === "error") return `订阅额度获取失败：${state.message}`;
 	if (state.kind === "cost") {
-		const provider = state.selectedProvider || "当前按量 provider";
 		const scope = state.costSource === "session-ledger" ? "完整会话账本" : "当前上下文回退";
-		return `本会话 ${provider} 成本 ≈ ¥${money(state.cny)}（${scope} · $${money(state.usd, 4)} · 汇率 ${state.rate}${state.rateStale ? " 缓存" : ""}）`;
+		return `本会话计费估算 ≈ ¥${money(state.cny)}（${scope} · $${money(state.usd, 4)} · 汇率 ${state.rate}${state.rateStale ? " 缓存" : ""}）`;
 	}
-	const lines = [`ChatGPT 订阅额度${state.plan ? `（${state.plan}）` : ""}`];
+	const provider = state.provider || state.model?.provider || "当前 provider";
+	const lines = [`${provider} 订阅${state.plan ? `（${state.plan}）` : ""}`];
 	for (const w of [state.primary, state.secondary]) {
 		if (!w) continue;
 		const left = remainingMs(w);
@@ -167,10 +167,10 @@ export default {
 		container.innerHTML = `
 <div class="cu">
 	<header>
-		<h2>⚡ 订阅额度 / 成本<span class="cu-badge" style="display:none"></span></h2>
+		<h2>⚡ 模型额度 / 成本<span class="cu-badge" style="display:none"></span></h2>
 		<div class="cu-actions"><span class="cu-updated">—</span><button type="button" class="cu-refresh">刷新</button></div>
 	</header>
-	<p class="cu-hint">Codex 订阅显示 5 小时 / 每周窗口用量与重置倒计时；按量模型仅统计本会话的非订阅调用成本，自动剔除 Codex 理论 API 价。数据源：ChatGPT 用量接口 + 实时汇率。</p>
+	<p class="cu-hint">订阅 provider 自动排除理论 API 价；有额度适配器时显示窗口用量。按量 / 积分 provider 从完整会话账本汇总成本，并按实时汇率显示人民币。</p>
 	<div class="cu-body"><div class="cu-card">正在获取…</div></div>
 	<div class="cu-meta"></div>
 </div>`;
@@ -278,7 +278,7 @@ export default {
 			if (barEl.textContent !== text) barEl.textContent = text;
 			const title = barTitle(state);
 			if (barEl.title !== title) barEl.title = title;
-			const cls = state.kind === "codex" ? levelClass(state.primary?.usedPercent) : "";
+			const cls = state.kind === "subscription" ? levelClass(state.primary?.usedPercent) : "";
 			if (barEl.className !== cls) barEl.className = cls;
 		}
 
@@ -307,7 +307,46 @@ export default {
 		}
 
 		// ---- 渲染 ----
-		function renderCodex(s) {
+		function billingLabel(mode) {
+			return ({ subscription: "订阅", metered: "API 按量", prepaid: "预付积分", free: "免费/本地", hybrid: "订阅+超额", unknown: "待确认" })[mode] || mode || "待确认";
+		}
+
+		function billingAmount(row) {
+			if (row.mode === "subscription") return `目录价 ¥${money(row.theoreticalCny)}（订阅已排除）`;
+			if (row.mode === "free") return `目录价 ¥${money(row.theoreticalCny)}（免费，不计费）`;
+			if (row.mode === "prepaid") return `积分消耗估算 ¥${money(row.cny)}`;
+			if (row.mode === "unknown") return `未确认目录价 ¥${money(row.cny)}`;
+			if (row.mode === "hybrid") return `混合计费估算 ¥${money(row.cny)}`;
+			return `成本估算 ¥${money(row.cny)} · $${money(row.usd, 4)}`;
+		}
+
+		function renderProviderBreakdown(s) {
+			const rows = Array.isArray(s.providers) ? s.providers : [];
+			if (!rows.length) return "";
+			return `<div class="cu-card" style="margin-top:10px">
+				<div class="cu-k"><span>本会话 Provider 明细</span><span>${s.costSource === "session-ledger" ? "完整会话账本" : "当前上下文回退"}</span></div>
+				${rows
+					.map((row) => {
+						const detail = [row.billingLabel && row.billingLabel !== row.provider ? row.billingLabel : "", row.billingNote || "", row.baseUrl || ""]
+							.filter(Boolean)
+							.join(" · ");
+						return `<div class="cu-sub" style="padding:4px 0;border-bottom:1px solid rgba(127,127,127,.12)">
+							<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(row.provider)} · ${esc(billingLabel(row.mode))}</span><span>${esc(billingAmount(row))}</span></div>
+							${detail ? `<div style="opacity:.7">${esc(detail)} · 识别 ${esc(row.billingConfidence || "low")}</div>` : ""}
+						</div>`;
+					})
+					.join("")}
+			</div>`;
+		}
+
+		function renderSubscription(s) {
+			if (!s.quotaAvailable) {
+				return `<div class="cu-card">
+					<div class="cu-k"><span>${esc(s.provider || s.model?.provider || "当前 provider")} 订阅</span><span>不计入按量成本</span></div>
+					<div class="cu-v" style="font-size:18px">已识别为订阅模式</div>
+					<div class="cu-sub">${esc(s.message || "该 provider 暂无可读取的额度接口；已排除会话中的理论 API 目录价。")}</div>
+				</div>${renderProviderBreakdown(s)}`;
+			}
 			const cards = [s.primary, s.secondary]
 				.filter(Boolean)
 				.map((w) => {
@@ -322,36 +361,28 @@ export default {
 	</div>`;
 				})
 				.join("");
-			const resets =
-				s.resets > 0
-					? `<div class="cu-sub">可用 banked reset：<b>${s.resets}</b> 次（在 ChatGPT 里兑换）</div>`
-					: "";
-			const warn = s.expired
-				? `<div class="cu-sub" style="color:#eab308">凭证已过期——请在 pi 里重新登录 Codex 后刷新</div>`
-				: "";
-			const reached = s.limitReached
-				? `<div class="cu-sub" style="color:#ef4444">当前窗口已达上限（limit reached）</div>`
-				: "";
-			return `${cards || '<div class="cu-card">接口未返回窗口数据</div>'}${resets}${warn}${reached}`;
+			const resets = s.resets > 0 ? `<div class="cu-sub">可用 banked reset：<b>${s.resets}</b> 次</div>` : "";
+			const warn = s.expired ? `<div class="cu-sub" style="color:#eab308">凭证已过期——请重新登录后刷新</div>` : "";
+			const reached = s.limitReached ? `<div class="cu-sub" style="color:#ef4444">当前窗口已达上限</div>` : "";
+			return `${cards || '<div class="cu-card">接口未返回窗口数据</div>'}${resets}${warn}${reached}${renderProviderBreakdown(s)}`;
 		}
 
 		function renderCost(s) {
 			const excluded = Number(s.subscriptionMessagesExcluded) || 0;
 			const missing = Number(s.missingCostMessages) || 0;
 			const auxiliary = Number(s.auxiliaryCalls) || 0;
-			const provider = s.selectedProvider || "当前按量 provider";
 			const fullLedger = s.costSource === "session-ledger";
 			return `
 	<div class="cu-card">
-		<div class="cu-k"><span>本会话 ${esc(provider)} 成本</span><span>${fullLedger ? "完整会话账本" : "当前上下文回退"}</span></div>
+		<div class="cu-k"><span>本会话实际 / 估算按量成本</span><span>${fullLedger ? "完整会话账本" : "当前上下文回退"}</span></div>
 		<div class="cu-big">¥${esc(money(s.cny))}</div>
 		<div class="cu-sub">≈ $${esc(money(s.usd, 4))} · 1 USD = ${esc(s.rate)} CNY · 汇率时间 ${esc(fmtTime(s.rateAt))}${
 			s.rateError ? ` · 抓取失败：${esc(s.rateError)}` : ""
 		}</div>
-		<div class="cu-sub">已纳入 ${esc(s.meteredMessages)} 次 ${esc(provider)} 回复${
+		<div class="cu-sub">已纳入 ${esc(s.meteredMessages)} 次按量/积分调用${
 			auxiliary ? ` · ${esc(auxiliary)} 次压缩/摘要调用` : ""
-		} · 已排除 ${esc(excluded)} 次 Codex 订阅调用${missing ? ` · ${esc(missing)} 次调用缺少成本字段` : ""}</div>
-	</div>`;
+		} · 已排除 ${esc(excluded)} 次订阅调用${missing ? ` · ${esc(missing)} 次调用缺少成本字段` : ""}</div>
+	</div>${renderProviderBreakdown(s)}`;
 		}
 
 		function render(state) {
@@ -363,7 +394,7 @@ export default {
 				bodyEl.innerHTML = `<div class="cu-err"><b>获取失败</b><div style="margin-top:4px">${esc(state.message)}</div></div>`;
 				return;
 			}
-			bodyEl.innerHTML = state.kind === "codex" ? renderCodex(state) : renderCost(state);
+			bodyEl.innerHTML = state.kind === "subscription" ? renderSubscription(state) : renderCost(state);
 		}
 
 		function renderMeta(s) {
@@ -371,6 +402,10 @@ export default {
 			const bits = [];
 			if (s.plan) bits.push(`套餐：${s.plan}`);
 			if (s.model?.provider) bits.push(`模型：${s.model.provider}${s.model.model ? ` / ${s.model.model}` : ""}`);
+			if (s.selectedBillingMode) {
+				bits.push(`计费识别：${billingLabel(s.selectedBillingMode)} · ${s.selectedBillingSource || "unknown"} · 置信度 ${s.selectedBillingConfidence || "low"}`);
+				if (s.selectedBillingNote) bits.push(`计费提示：${s.selectedBillingNote}`);
+			}
 			bits.push(
 				s.serviceProxy
 					? `服务进程代理：${s.serviceProxy} · dispatcher ${s.dispatcherReady === true ? "已配置" : s.dispatcherReady === false ? "未配置（fetch 类请求仍会失败）" : "未知"}`

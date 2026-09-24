@@ -78,12 +78,16 @@ $managedRecentProjectsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-permanent-
 # 启动时只跑 --remove：幂等清除旧 ⏳ 注入，并安装一次性 SW 缓存清理，绝不重新添加按钮。
 $quickPhraseQueueCleanup = Join-Path $cwd 'patches\patch-pi-web-ui-quick-phrase-queue.js'
 $topbarMenuButtonsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-topbar-menu-buttons.js'
+$pluginTopbarCachePatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-topbar-cache.js'
+$planBoardClearPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-board-clear.js'
+$planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
+$danglingToolCallsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-dangling-tool-calls.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
 $stopButtonPatch = Join-Path $cwd 'patches\apply-stop-button.ps1'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
 }
 if ((Test-Path $quickPhraseQueueCleanup) -and (Get-Command node -ErrorAction SilentlyContinue)) {

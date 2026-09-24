@@ -40,6 +40,10 @@ const MARKERS = {
 	"patch-pi-web-ui-recovery-ui.js": { file: "html", marker: "pi-recovery-ui-v2" },
 	"patch-pi-web-ui-quick-phrase-queue.js": { file: "web", marker: "quick-chip-group" },
 	"patch-pi-web-ui-topbar-menu-buttons.js": { file: "web", marker: "topbar-menu-buttons-patch" },
+	"patch-pi-web-ui-plugin-topbar-cache.js": { file: "web", marker: "plugin-topbar-cache-patch-v2" },
+	"patch-pi-web-ui-plan-board-clear.js": { file: "web", marker: "plan-board-clear-no-confirm-v1" },
+	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: "plan-inline-marker-v1" },
+	"patch-pi-web-ui-dangling-tool-calls.js": { file: "server", marker: "dangling-active-chain-filter-v2" },
 	"apply-stop-button.ps1": { file: "html", marker: "stopPulse" },
 };
 
@@ -88,7 +92,16 @@ function webFile(kind) {
 	if (kind === "server") {
 		const dir = path.join(webRoot, "dist", "server");
 		if (!fs.existsSync(dir)) return null;
-		return fs.readdirSync(dir).filter((f) => f.endsWith(".js")).map((f) => path.join(dir, f));
+		const files = [];
+		const walk = (current) => {
+			for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+				const full = path.join(current, entry.name);
+				if (entry.isDirectory()) walk(full);
+				else if (entry.isFile() && entry.name.endsWith(".js")) files.push(full);
+			}
+		};
+		walk(dir);
+		return files;
 	}
 	const dir = path.join(webRoot, "web", "dist", "assets");
 	if (!fs.existsSync(dir)) return null;
@@ -183,6 +196,16 @@ for (const rel of profile.patches) {
 // 不比对「profile 项数 == 断言表项数」：断言表是跨版本的超集，各版本 profile 因补丁
 // 退役/新增而项数不同（如 0.94.1 退役了 fork 去重与最近项目两项）。真正要守的是
 // 「profile 里每一项都能被校验」——上面逐项检查已覆盖（未登记者直接判失败）。
+
+// plan marker 的真实装配链：只检查 marker-service 的 ctx.host 不够，AgentService
+// 创建 MarkerService 时也必须传入同一个 PlanManager，否则界面会提示服务不可用。
+const agentServiceFile = path.join(webRoot, "dist", "server", "agent-service.js");
+const agentServiceText = fs.existsSync(agentServiceFile) ? fs.readFileSync(agentServiceFile, "utf8") : "";
+if (/this\.markerSvc = new MarkerService\(\{[\s\S]*?planManager: this\.planManager,[\s\S]*?flushSnapshot: \(\) => this\.flushSnapshot\(\),/.test(agentServiceText)) {
+	pass("plan marker host", "AgentService 已注入 planManager");
+} else {
+	fail("plan marker host", "AgentService 未向 MarkerService 注入 planManager");
+}
 
 // ---- 4. 汇总 ----
 const failed = results.filter((r) => !r.ok);
