@@ -4,7 +4,7 @@
 #   1. 重新打包便携安装包（含补丁、插件、定位模块、启动器）
 #   2. 同步到公开仓库目录 pi-web-ui-setup
 #   3. 提交并推送私有仓库 AIWork 与公开仓库 pi-web-ui-setup
-#   4. 从 GitHub 匿名下载关键文件，与本地逐个比对 hash，确认真的同步成功
+#   4. 从 GitHub 匿名下载关键文件，与本地逐个比对 hash（文本按行尾归一化），确认真的同步成功
 #
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\sync-pi-web-ui-setup.ps1
 $ErrorActionPreference = 'Stop'
@@ -68,6 +68,19 @@ function Get-Sha256([string]$Path) {
             return (($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join '')
         } finally { $sha.Dispose() }
     } finally { $stream.Dispose() }
+}
+
+# 文本文件按「CRLF→LF」归一化后再算 SHA256。
+# 仓库 core.autocrlf=true 会把工作区的 CRLF 规范成 LF 存进提交，而
+# raw.githubusercontent 返回的正是提交里的字节——直接比原始 SHA256 会把
+# 「只有行尾不同」误报成同步失败（内容其实一模一样）。
+function Get-Sha256Normalized([string]$Path) {
+    $text = [System.IO.File]::ReadAllText($Path) -replace "`r`n", "`n"
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally { $sha.Dispose() }
 }
 
 Info '=== 1/5 重新打包安装包 ==='
@@ -163,7 +176,8 @@ $failed = @()
 $offline = 0
 foreach ($f in $files) {
     $localFile = Join-Path $publicDir $f
-    $localHash = Get-Sha256 $localFile
+    $isText = $f -notmatch '\.(zip|png|jpe?g|gif|ico|exe)$'
+    $localHash = if ($isText) { Get-Sha256Normalized $localFile } else { Get-Sha256 $localFile }
     $got = $null
     # 临时文件名不能带路径分隔符（source/... 这种 $f 直接拼进去会让 -OutFile 写到不存在的子目录而报错）
     $safeName = ($f -replace '[^A-Za-z0-9._-]', '_')
@@ -172,7 +186,7 @@ foreach ($f in $files) {
             $tmp = Join-Path $env:TEMP ("raw-" + $safeName + "-" + $i)
             $url = "$verifyRawBase/$f"
             Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 20
-            $got = Get-Sha256 $tmp
+            $got = if ($isText) { Get-Sha256Normalized $tmp } else { Get-Sha256 $tmp }
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         } catch {
             Start-Sleep -Seconds 3
