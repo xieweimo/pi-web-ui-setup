@@ -3,6 +3,7 @@
 	"name": "额度",
 	"icon": "⚡",
 	"version": "1.0.0",
+	"apiVersion": 2,
 	"description": "订阅额度 / 成本显示：ChatGPT(Codex) 订阅显示 5h 与每周窗口用量、重置倒计时、可用 reset 次数；非订阅模型显示人民币成本（实时汇率）",
 	"permissions": [
 		"http",

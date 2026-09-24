@@ -15,6 +15,7 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 
 const marker = "quick-chip-group";
@@ -31,6 +32,33 @@ const target = bundlePath();
 if (!target) {
 	console.error("✗ 找不到 pi-web-ui 的 web/dist/assets/index-*.js");
 	process.exit(1);
+}
+
+/**
+ * 补丁曾经直接改 bundle 内容却保留 Vite 原文件名，Service Worker 又对 /assets 使用
+ * cache-first，结果即使代码已撤回，浏览器仍可能长期拿到旧的 ⏳ 版本。
+ *
+ * 不能给主模块改名或加 query：其他 Vite chunk 会按原文件名反向 import 主模块，改 URL
+ * 会制造两个模块实例或直接 404。这里在 index.html 前置一个“一次性缓存清理”：每个干净
+ * bundle hash 在每个浏览器只执行一次；若真删到了旧缓存，自动 reload 一次再加载干净代码。
+ */
+function installOneTimeCacheCleanup() {
+	const distDir = path.dirname(path.dirname(target));
+	const indexFile = path.join(distDir, "index.html");
+	if (!fs.existsSync(indexFile)) return false;
+	const hash = crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex").slice(0, 12);
+	const assetUrl = `/assets/${path.basename(target)}`;
+	const begin = "<!-- piwork-quick-queue-cache-clean:start -->";
+	const end = "<!-- piwork-quick-queue-cache-clean:end -->";
+	const cleanup = `${begin}\n<script>(()=>{const k=${JSON.stringify(`piwork:quick-queue-clean:${hash}`)},u=new URL(${JSON.stringify(assetUrl)},location.origin).href;if(!(\"caches\" in window)||localStorage.getItem(k)===\"1\")return;caches.keys().then(a=>Promise.all(a.map(async n=>(await caches.open(n)).delete(u)))).then(a=>{localStorage.setItem(k,\"1\");if(a.some(Boolean))location.reload()}).catch(()=>{})})()</script>\n${end}`;
+	const html = fs.readFileSync(indexFile, "utf8");
+	const block = new RegExp(`${begin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+	let out;
+	if (block.test(html)) out = html.replace(block, cleanup);
+	else out = html.replace(/(?=\s*<script type="module")/, `\n\t${cleanup}\n`);
+	if (out === html) return false;
+	fs.writeFileSync(indexFile, out, "utf8");
+	return true;
 }
 /** 0.94.1 起上游已内建右键排队（chip 的 onContextMenu → send(e,true)），
  *  我们额外挂的 ⏳ 按钮不再需要 —— 带 --remove 运行即把它从 bundle 里撤掉（反向替换，幂等）。 */
@@ -85,11 +113,13 @@ if (REMOVE) {
 	const hit = variants.filter((v) => source.split(v.chipReplacement).length - 1 === 1);
 	if (!hit.length) {
 		console.log("✓ 未发现 ⏳ 按钮（无需移除）");
+		if (installOneTimeCacheCleanup()) console.log("✓ 已安装一次性浏览器缓存清理（命中旧 bundle 时自动刷新）");
 		process.exit(0);
 	}
 	let out = source.replace(hit[0].chipReplacement, hit[0].chipNeedle);
 	if (hit[0].sendReplacement && out.includes(hit[0].sendReplacement)) out = out.replace(hit[0].sendReplacement, hit[0].sendNeedle);
 	fs.writeFileSync(target, out, "utf8");
+	installOneTimeCacheCleanup();
 	console.log("✓ 已移除快捷短语右侧的 ⏳ 按钮（改用上游内建的右键排队）");
 	console.log(`  目标：${target}`);
 	process.exit(0);

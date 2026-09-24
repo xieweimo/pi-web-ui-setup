@@ -1,0 +1,10 @@
+{
+  "piVersion": "0.87.1",
+  "piWebUiVersion": "0.95.0",
+  "patches": [
+    "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-topbar-menu-buttons.js",
+    "patches/apply-stop-button.ps1"
+  ],
+  "notes": "pi 0.87.1（pi-web-ui 0.95.0 自带且默认生效的 SDK 副本）+ pi-web-ui 0.95.0。三项现役补丁均已在新产物上重新命中并通过语法校验：plugin-live-model、topbar-menu-buttons、stop-button。quick-phrase-queue 继续只执行 --remove，用于清除旧 ⏳ 注入及旧 Service Worker 缓存，不列入现役补丁；usage-cost、hide-forked-sessions、permanent-project-ignore、recovery-ui 继续退役。0.95.0 新增 manifest 严格校验，因此四个自有插件均明确声明 apiVersion: 2，并保留与实际宿主 API 使用一致的 permissions。pi 0.87.0 的破坏性变更（shouldStopAfterTurn 移除、ContextEditEntry、SessionManager canonical context、TurnEndEvent/AgentBeforeSettleEvent）已检索：PIwork 插件不直接使用这些 SDK 接口；pi-subagents 0.71.0 明确支持 Pi 0.87 context edits。升级后需重新安装插件、重启正式服务，并执行秒级补丁检查与真实页面检查。"
+}

@@ -4,9 +4,10 @@ pi-web-ui 界面插件：把「当前到底花了多少额度」放在一眼能�
 
 - **ChatGPT / Codex 订阅**：显示 5 小时窗口与每周窗口的已用百分比、重置倒计时、
   可用 banked reset 次数、套餐类型（plus / pro …）。
-- **非订阅（按量计费的 API key）**：显示当前会话累计成本的人民币金额（实时汇率），
-  不再是一个没有意义的 `$` 数字。
-- 两者按**当前会话实际使用的模型**自动切换（auto 模式）。
+- **非订阅（按量计费的 API key）**：显示当前会话中、当前选中 provider（如 `deepseek`）
+  从创建至今的完整累计成本（人民币、实时汇率）；上下文压缩不会让金额归零，也不会混入
+  Codex 或其他 provider 的成本。
+- 两者按**当前会话实际选择的模型**自动切换（auto 模式）。
 
 ## 界面上的两个位置
 
@@ -15,19 +16,15 @@ pi-web-ui 界面插件：把「当前到底花了多少额度」放在一眼能�
 | 底部状态栏（默认开启） | 一行摘要：`⚡ 5h 24% · 7d 4%` 或 `⚡ ¥8.30`，鼠标悬停看详细信息，点击跳到本插件的 tab |
 | 顶栏 ⚡ 标签 | 完整卡片：每个窗口的进度条、重置时间、reset 次数、汇率与刷新来源 |
 
-状态栏注入是插件通过 `document.querySelector('.statusbar')` 自己做的（pi-web-ui 不提供
-官方注入点），因此：
-
-- 找不到状态栏时**自动降级**为仅有 tab 视图，不影响主应用；
-- pi-web-ui 大改状态栏 DOM 后可能失效，把设置里的「在底部状态栏显示摘要」关掉即可；
-- 想彻底去掉：卸载插件。
+pi-web-ui 0.90.0+ 使用官方 `bottombar` 槽位渲染状态栏摘要；旧版宿主自动降级到 DOM 注入。
+插件额外防止状态栏条目在流式回复时被 flex 压缩到不可见。
 
 ## 数据来源
 
 | 数据 | 来源 |
 | --- | --- |
 | 订阅额度 | `GET https://chatgpt.com/backend-api/wham/usage`（Codex CLI `/status` 背后的同一份数据），凭证取自 `<agentDir>/auth.json` 的 `openai-codex` |
-| 会话成本 | pi-web-ui 宿主 `host.getActiveConversation().stats.cost`（美元） |
+| 会话成本 | `<agentDir>/sessions/**/*.jsonl` 当前对话的完整活动分支；只累计当前选中 provider 的 `usage.cost.total`（美元），包含压缩前消息与同 provider 的压缩/摘要调用 |
 | 汇率 | `https://open.er-api.com/v6/latest/USD` → `rates.CNY`，缓存 12 小时（免费、无需 key） |
 
 ## 设置项
@@ -47,9 +44,11 @@ pi-web-ui 界面插件：把「当前到底花了多少额度」放在一眼能�
 
 - **只读** `<agentDir>/auth.json`，从不写入，也不打印 token；OAuth access token 只用于
   请求用量接口，不进入日志、不广播给前端。
+- 为避免上下文压缩后成本归零，按 `conversationId` 只读对应的会话 JSONL；解析后只使用
+  条目父子关系、provider 与 `usage.cost.total`，不存储或广播消息正文。
 - 广播给前端的数据只含：窗口百分比、重置时间、reset 次数、套餐类型、脱敏邮箱
-  （`xi***@gmail.com`）与会话成本金额。
-- 本插件不注册 AI 工具、不读工作区文件。
+  （`xi***@gmail.com`）与会话成本摘要。
+- 本插件不注册 AI 工具，也不读取工作区源码文件。
 
 ## 故障排查
 

@@ -3,6 +3,7 @@
 	"name": "临时问问",
 	"icon": "💬",
 	"version": "1.0.0",
+	"apiVersion": 2,
 	"description": "任务运行中打开独立临时问答浮层；沿用当前模型，但不读取、不写入当前任务会话。",
 	"view": true,
 	"permissions": ["ui", "http", "llm"],

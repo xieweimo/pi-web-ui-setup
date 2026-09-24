@@ -112,7 +112,17 @@ async function main() {
 		if (!data.buttons.some((value) => /重启/.test(value))) throw new Error("服务卡片上没有重启按钮");
 		if (!data.matrix?.length) throw new Error("缺少影响范围对照表");
 		if (!data.impact?.length) throw new Error("服务卡片缺少「会重启什么/不动什么」说明");
-		const shot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+		// 默认只截「面板区域」（取 .rc 的边界框），避免把底栏里的本机路径等一起截进去；
+		// 需要整页时加 --full。scale:2 = 两倍图，发给人看更清楚。
+		let clip;
+		if (!args.includes("--full")) {
+			const box = await send("Runtime.evaluate", {
+				expression: "(()=>{const el=document.querySelector('.rc');if(!el)return null;const r=el.getBoundingClientRect();return JSON.stringify({x:Math.max(0,r.x-8),y:Math.max(0,r.y-8),width:r.width+16,height:r.height+16})})()",
+				returnByValue: true,
+			});
+			if (box?.result?.value) clip = { ...JSON.parse(box.result.value), scale: 2 };
+		}
+		const shot = await send("Page.captureScreenshot", clip ? { format: "png", clip } : { format: "png", captureBeyondViewport: true });
 		fs.writeFileSync(OUT, Buffer.from(shot.data, "base64"));
 		console.log(JSON.stringify({ ok: true, title: data.title, environment: data.environment, services: data.services, buttons: data.buttons, matrix: data.matrix, impact: data.impact, panelText: (data.text || "").slice(0, 700), screenshot: OUT }, null, 2));
 		socket.close();

@@ -16,7 +16,7 @@
  *
  * 说明：需要系统里有 Edge（Windows 自带）；不发送任何模型请求，不消耗额度。
  */
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -184,7 +184,14 @@ async function main() {
 			slotBar: (() => {
 				const btn = [...document.querySelectorAll('.statusbar .status-action')]
 					.find(n => /订阅额度|按量成本|Codex 订阅|5h\\s*已用|每周\\s*已用/.test((n.getAttribute('title') || '') + ' ' + (n.textContent || '')));
-				return btn ? { text: (btn.innerText || '').trim(), title: btn.getAttribute('title') || '' } : null;
+				if (!btn) return null;
+				const style = getComputedStyle(btn);
+				return {
+					text: (btn.innerText || '').trim(),
+					title: btn.getAttribute('title') || '',
+					flexShrink: style.flexShrink,
+					whiteSpace: style.whiteSpace,
+				};
 			})(),
 			nativeCostHidden: costItem ? costItem.style.display === 'none' : null,
 			// 状态栏实际子节点（排查「条目看不见 / 显示两次」时最直接）：
@@ -206,13 +213,17 @@ async function main() {
 	const data = res?.result?.value ? JSON.parse(res.result.value) : null;
 
 	console.log("\n=== codex-usage 自检结果 ===");
+	let passed = false;
 	if (!data) {
 		console.log("✗ 页面探测失败");
 	} else {
 		console.log("插件 tab：", data.pluginTab.join(" / ") || "（未出现）");
 		console.log("顶部独立入口：", (data.topbarItems || []).map(x => x.text || x.tip).filter(Boolean).join(" / ") || "（未出现）");
 		console.log("状态栏摘要：", data.statusBarSummary ?? (data.slotBar ? data.slotBar.text + "（官方 bottombar 槽位）" : "（未注入）"));
-		if (data.slotBar) console.log("  悬停提示：", data.slotBar.title);
+		if (data.slotBar) {
+			console.log("  悬停提示：", data.slotBar.title);
+			console.log("  防挤压样式： flex-shrink=" + data.slotBar.flexShrink + " · white-space=" + data.slotBar.whiteSpace);
+		}
 		console.log("原生成本项已隐藏：", data.nativeCostHidden);
 		console.log("插件元数据：\n" + (data.meta ?? "（读不到）").split("\n").map((l) => "  " + l).join("\n"));
 		if (Array.isArray(data.barItems)) {
@@ -229,10 +240,12 @@ async function main() {
 			for (const line of data.barHtml.replace(/></g, ">\n<").split("\n")) console.log("  " + line);
 		}
 		const topbarText = (data.topbarItems || []).map(x => `${x.text} ${x.tip}`).join(' ');
-		const topbarOk = ['声音', '中文', '主题', 'v0.94.1', 'GitHub'].every(x => topbarText.includes(x));
-		const ok = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0 && topbarOk;
+		const hasVersionButton = /\bv\d+\.\d+\.\d+\b/.test(topbarText);
+		const topbarOk = ['声音', '中文', '主题', 'GitHub'].every(x => topbarText.includes(x)) && hasVersionButton;
+		const barPinned = !data.slotBar || (data.slotBar.flexShrink === "0" && data.slotBar.whiteSpace === "nowrap");
+		passed = Boolean(data.statusBarSummary || data.slotBar) && data.pluginTab.length > 0 && topbarOk && barPinned;
 		console.log("原生菜单项已提升到顶栏：", topbarOk);
-		console.log(ok ? "\n✓ 插件及顶栏按钮工作正常" : "\n✗ 自检未通过（看上面的空项）");
+		console.log(passed ? "\n✓ 插件及顶栏按钮工作正常" : "\n✗ 自检未通过（看上面的空项）");
 	}
 
 	const shot = await send("Page.captureScreenshot", { format: "png" });
@@ -242,10 +255,25 @@ async function main() {
 	}
 
 	ws.close();
-	child.kill();
-	await sleep(500);
-	fs.rmSync(CDP_DIR, { recursive: true, force: true });
-	process.exit(0);
+	try {
+		if (process.platform === "win32") {
+			execFileSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		} else {
+			child.kill("SIGKILL");
+		}
+	} catch {
+		/* Edge 可能已自行退出。 */
+	}
+	for (let i = 0; i < 10; i++) {
+		try {
+			fs.rmSync(CDP_DIR, { recursive: true, force: true });
+			break;
+		} catch (err) {
+			if (i === 9) throw err;
+			await sleep(300);
+		}
+	}
+	process.exit(passed ? 0 : 1);
 }
 
 main().catch((e) => {

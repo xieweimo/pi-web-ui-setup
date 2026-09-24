@@ -13,13 +13,49 @@ $repoRoot   = Split-Path $PSScriptRoot -Parent
 $workRoot   = Split-Path $repoRoot -Parent                       # C:\AIWork\PI
 $privateDir = Split-Path $workRoot -Parent                       # C:\AIWork
 $publicDir  = Join-Path $workRoot 'pi-web-ui-setup'
-$zipName    = 'PiWebUI-Setup_pi-0.85.1_web-0.94.1.zip'
+$zipName    = 'PiWebUI-Setup_pi-0.87.1_web-0.95.0.zip'
 $files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source/docs/after-install-checklist.md', 'source/projects/piwork-tools-plugin/manifest.json')
 $rawBase    = 'https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main'
 
 function Info($m) { Write-Host $m }
 function Ok($m) { Write-Host $m -ForegroundColor Green }
 function Warn($m) { Write-Host $m -ForegroundColor Yellow }
+
+# GitHub 的 SSH 22 端口在部分网络中会被重置或长时间无响应。先按用户现有
+# ssh config 正常推送；失败时自动改走 GitHub 官方 ssh.github.com:443。
+# HostKeyAlias=github.com 复用已信任的 GitHub host key，不静默接受新密钥。
+function Push-GitHubBranch([string]$Branch) {
+    $oldSshCommand = $env:GIT_SSH_COMMAND
+    try {
+        $normalSsh = if ($oldSshCommand) { $oldSshCommand + ' -o BatchMode=yes -o ConnectTimeout=15' } else { 'ssh -o BatchMode=yes -o ConnectTimeout=15' }
+        $env:GIT_SSH_COMMAND = $normalSsh
+        & git push -q origin $Branch
+        if ($LASTEXITCODE -eq 0) { return }
+    } finally {
+        $env:GIT_SSH_COMMAND = $oldSshCommand
+    }
+
+    $originUrl = (& git remote get-url origin).Trim()
+    if ($LASTEXITCODE -ne 0 -or $originUrl -notmatch 'github\.com[:/]') {
+        throw "git push 失败，且远端不是 GitHub SSH，不能自动切换 443: $originUrl"
+    }
+
+    Warn '  SSH 22 推送失败，自动切换 GitHub SSH 443 重试…'
+    try {
+        $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o ConnectTimeout=20 -o HostName=ssh.github.com -o HostKeyAlias=github.com -p 443'
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & git push -q origin $Branch
+            if ($LASTEXITCODE -eq 0) { return }
+            if ($attempt -lt 3) {
+                Warn ("  SSH 443 第 $attempt 次失败，3 秒后重试…")
+                Start-Sleep -Seconds 3
+            }
+        }
+    } finally {
+        $env:GIT_SSH_COMMAND = $oldSshCommand
+    }
+    throw "git push 失败：SSH 22 与 GitHub 官方 SSH 443 均不可用 ($originUrl)"
+}
 
 # 不用 Get-FileHash：本机 PowerShell 5.1 的 Microsoft.PowerShell.Utility 偶尔加载不出来
 # （Import-Module 也救不回来），校验就会整段报 CommandNotFoundException。
@@ -95,8 +131,7 @@ foreach ($dir in @($privateDir, $publicDir)) {
         }
         $branch = (git rev-parse --abbrev-ref HEAD).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $branch -or $branch -eq 'HEAD') { throw "仓库不在有效分支上: $dir" }
-        git push -q origin $branch
-        if ($LASTEXITCODE -ne 0) { throw "git push 失败: $dir ($branch)" }
+        Push-GitHubBranch $branch
         $local = (git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw "读取本地提交失败: $dir" }
         $remote = (git rev-parse "origin/$branch").Trim()

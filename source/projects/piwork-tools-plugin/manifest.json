@@ -3,6 +3,7 @@
 	"name": "同步",
 	"icon": "⤴",
 	"version": "1.0.0",
+	"apiVersion": 2,
 	"description": "PIwork 工作区工具：顶栏「同步」页（打包并推送 pi-web-ui-setup，与安装包同步）。断连重连是另一个独立插件（reconnect）",
 	"permissions": ["ui", "http"],
 	"ui": {

@@ -5,13 +5,14 @@
  *   1) 订阅额度：读 <agentDir>/auth.json 里 openai-codex 的 OAuth 凭证，请求
  *      ChatGPT 后端 GET https://chatgpt.com/backend-api/wham/usage
  *      → 5 小时窗口 / 每周窗口的已用百分比、重置时间、可用 reset 次数。
- *   2) 按量计费：非订阅模型时逐条累计当前会话的非 openai-codex 消息成本
- *      （剔除 ChatGPT/Codex 订阅调用的理论 API 价）× 实时汇率 → 人民币。
+ *   2) 按量计费：非订阅模型时读取当前对话完整活动分支，只累计当前选中 provider
+ *      （如 deepseek）的已结算调用成本；不受上下文压缩影响，也不混入 Codex/其他
+ *      provider，再乘实时汇率显示人民币。
  *
  * 结果经 host.broadcast({ state }) 推给同插件的客户端视图（client/entry.mjs）。
  * 只读凭证、不写、不打印；token 永远不进日志与广播数据。
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { connect as tlsConnect } from "node:tls";
@@ -203,6 +204,14 @@ function normWindow(w) {
 
 /** 当前选中模型优先；没有时才退回最后一条 assistant 消息（兼容旧版宿主）。 */
 function pickModel(conv) {
+	// 0.94.1 的插件快照直接提供 canonical model（provider/model）。必须优先用它：
+	// 消息列表可能刚经历压缩，或者用户刚切模型、当前回复仍在流式，此时末条已完成消息
+	// 仍属于旧 provider，不能拿它冒充当前选择。
+	const canonical = typeof conv?.model === "string" ? conv.model.trim() : "";
+	const slash = canonical.indexOf("/");
+	if (slash > 0 && slash < canonical.length - 1) {
+		return { provider: canonical.slice(0, slash), model: canonical.slice(slash + 1) };
+	}
 	const active = conv?.activeModel;
 	if (active && (active.provider || active.model || active.id)) {
 		return { provider: active.provider ?? null, model: active.model ?? active.id ?? null };
@@ -222,31 +231,176 @@ function pickModel(conv) {
 }
 
 /**
- * 逐条汇总按量模型成本。会话总 cost 会混入 openai-codex 的理论 API 价格，
- * 对 ChatGPT 订阅用户没有实际账单意义，故这里明确排除。
- *
- * usageCost 由 pi-web-ui 的最小兼容补丁提供；它只是一项数值，不含消息内容。
+ * 兼容回退：只汇总当前上下文中、属于选中 provider 的已完成消息。
+ * 正常情况走下面的完整会话账本；找不到会话文件时才会落到这里。
  */
-function meteredSessionCost(conv) {
+function meteredContextCost(conv, selectedProvider) {
 	let usd = 0;
 	let meteredMessages = 0;
 	let subscriptionMessages = 0;
 	let missingCostMessages = 0;
 	for (const m of Array.isArray(conv?.messages) ? conv.messages : []) {
 		if (m?.role !== "assistant" || !m.provider) continue;
+		if (m.provider === CODEX_PROVIDER) {
+			subscriptionMessages += 1;
+			continue;
+		}
+		if (selectedProvider && m.provider !== selectedProvider) continue;
 		const cost = Number(m.usageCost);
 		if (!Number.isFinite(cost)) {
 			missingCostMessages += 1;
 			continue;
 		}
-		if (m.provider === CODEX_PROVIDER) {
-			subscriptionMessages += 1;
-			continue;
-		}
 		usd += cost;
 		meteredMessages += 1;
 	}
-	return { usd, meteredMessages, subscriptionMessages, missingCostMessages };
+	return {
+		usd,
+		meteredMessages,
+		subscriptionMessages,
+		missingCostMessages,
+		auxiliaryCalls: 0,
+		costSource: "context-fallback",
+	};
+}
+
+const sessionFileCache = new Map();
+
+/** 用 conversationId 在 pi 会话目录中定位完整 JSONL 账本；只缓存路径，不缓存金额。 */
+function findSessionFile(conversationId) {
+	const id = String(conversationId ?? "").trim();
+	if (!id || !/^[A-Za-z0-9_-]{6,128}$/.test(id)) return null;
+	const cached = sessionFileCache.get(id);
+	if (cached && existsSync(cached)) return cached;
+	const root = join(agentDir(), "sessions");
+	if (!existsSync(root)) return null;
+	const suffix = `_${id}.jsonl`;
+	let best = null;
+	let bestMtime = -1;
+	const stack = [root];
+	while (stack.length) {
+		const dir = stack.pop();
+		let entries;
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				stack.push(full);
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.endsWith(suffix)) continue;
+			let mtime = 0;
+			try {
+				mtime = statSync(full).mtimeMs;
+			} catch {
+				/* 能读就用，mtime 只是重复 id 时的择优依据。 */
+			}
+			if (mtime >= bestMtime) {
+				best = full;
+				bestMtime = mtime;
+			}
+		}
+	}
+	if (best) sessionFileCache.set(id, best);
+	return best;
+}
+
+function usageTotal(usage) {
+	const n = Number(usage?.cost?.total);
+	return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 从完整会话 JSONL 的当前分支累计指定 provider 的真实已结算 pi 成本。
+ * - 当前分支：从文件最后一个 leaf 沿 parentId 回溯，避免把废弃分支也算进去；
+ * - 压缩前消息仍在账本祖先链里，所以不会因上下文压缩归零；
+ * - compaction / branch_summary / 带 usage 的工具摘要也是 API 调用，按当时选中的 provider 计入；
+ * - JSONL 解析后只使用 provider、父子关系和 usage.cost.total，不存储或广播消息正文。
+ */
+function fullSessionProviderCost(conv, selectedProvider) {
+	if (!selectedProvider || selectedProvider === CODEX_PROVIDER) return null;
+	const file = findSessionFile(conv?.conversationId);
+	if (!file) return null;
+	let rows;
+	try {
+		rows = readFileSync(file, "utf8")
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.map((line) => {
+				try {
+					return JSON.parse(line);
+				} catch {
+					return null;
+				}
+			})
+			.filter(Boolean);
+	} catch {
+		return null;
+	}
+	const entries = rows.filter((e) => e?.type !== "session" && typeof e?.id === "string");
+	if (!entries.length) return null;
+	const byId = new Map(entries.map((e) => [e.id, e]));
+	const branch = [];
+	const seen = new Set();
+	let cur = entries[entries.length - 1];
+	while (cur && !seen.has(cur.id)) {
+		seen.add(cur.id);
+		branch.push(cur);
+		cur = cur.parentId ? byId.get(cur.parentId) : null;
+	}
+	branch.reverse();
+
+	let activeProvider = null;
+	let usd = 0;
+	let meteredMessages = 0;
+	let subscriptionMessages = 0;
+	let missingCostMessages = 0;
+	let auxiliaryCalls = 0;
+	for (const entry of branch) {
+		if (entry.type === "model_change" && typeof entry.provider === "string") {
+			activeProvider = entry.provider;
+			continue;
+		}
+		if (entry.type === "message" && entry.message?.role === "assistant") {
+			const provider = entry.message.provider ?? activeProvider;
+			if (provider === CODEX_PROVIDER) subscriptionMessages += 1;
+			if (provider !== selectedProvider) continue;
+			const cost = usageTotal(entry.message.usage);
+			if (cost === null) missingCostMessages += 1;
+			else {
+				usd += cost;
+				meteredMessages += 1;
+			}
+			continue;
+		}
+		const hasAuxUsage =
+			entry.type === "usage" ||
+			entry.type === "compaction" ||
+			entry.type === "branch_summary" ||
+			(entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.usage);
+		if (!hasAuxUsage) continue;
+		const provider = entry.provider ?? activeProvider;
+		if (provider !== selectedProvider) continue;
+		const usage = entry.usage ?? entry.message?.usage;
+		const cost = usageTotal(usage);
+		if (cost === null) missingCostMessages += 1;
+		else {
+			usd += cost;
+			auxiliaryCalls += 1;
+		}
+	}
+	return {
+		usd,
+		meteredMessages,
+		subscriptionMessages,
+		missingCostMessages,
+		auxiliaryCalls,
+		costSource: "session-ledger",
+	};
 }
 
 async function fetchUsage(cfg, proxy, auth) {
@@ -460,16 +614,21 @@ export default {
 
 				// 非订阅：只统计按量模型 → 人民币；明确不混入 Codex 订阅理论成本。
 				const fx = await getFx(cfg, proxy, host.storage);
-				const cost = meteredSessionCost(conv);
+				const selectedProvider = model?.provider ?? null;
+				const cost =
+					fullSessionProviderCost(conv, selectedProvider) ?? meteredContextCost(conv, selectedProvider);
 				push({
 					kind: "cost",
 					at: Date.now(),
 					mode: cfg.mode,
 					reason,
 					model,
+					selectedProvider,
 					usd: cost.usd,
 					cny: cost.usd * fx.rate,
 					meteredMessages: cost.meteredMessages,
+					auxiliaryCalls: cost.auxiliaryCalls,
+					costSource: cost.costSource,
 					subscriptionMessagesExcluded: cost.subscriptionMessages,
 					missingCostMessages: cost.missingCostMessages,
 					rate: fx.rate,

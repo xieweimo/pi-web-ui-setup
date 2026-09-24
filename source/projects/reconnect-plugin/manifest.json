@@ -3,6 +3,7 @@
 	"name": "重连",
 	"icon": "🔄",
 	"version": "1.0.0",
+	"apiVersion": 2,
 	"description": "断连恢复：查看网页服务与重启守护状态，一键重新连接或重启网页服务（独立插件，不属于「同步」）",
 	"permissions": ["ui", "http"],
 	"ui": {

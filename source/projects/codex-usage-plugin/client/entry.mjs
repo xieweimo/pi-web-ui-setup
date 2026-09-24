@@ -89,7 +89,9 @@ function barTitle(state) {
 	if (!state) return "订阅额度 / 成本";
 	if (state.kind === "error") return `订阅额度获取失败：${state.message}`;
 	if (state.kind === "cost") {
-		return `本会话按量模型成本 ≈ ¥${money(state.cny)}（已剔除 ${Number(state.subscriptionMessagesExcluded) || 0} 次 Codex 订阅调用 · $${money(state.usd, 4)} · 汇率 ${state.rate}${state.rateStale ? " 缓存" : ""}）`;
+		const provider = state.selectedProvider || "当前按量 provider";
+		const scope = state.costSource === "session-ledger" ? "完整会话账本" : "当前上下文回退";
+		return `本会话 ${provider} 成本 ≈ ¥${money(state.cny)}（${scope} · $${money(state.usd, 4)} · 汇率 ${state.rate}${state.rateStale ? " 缓存" : ""}）`;
 	}
 	const lines = [`ChatGPT 订阅额度${state.plan ? `（${state.plan}）` : ""}`];
 	for (const w of [state.primary, state.secondary]) {
@@ -137,10 +139,30 @@ function injectStyle(doc) {
 	doc.head.appendChild(el);
 }
 
+/**
+ * 状态栏那条摘要为什么容易被“挤没”：
+ * 上游的 .status-item / .status-action 只有 display:inline-flex，没有 flex-shrink:0，
+ * 而 .statusbar-left 是 flex:1 1 auto + min-width:0 —— 项变多（例如流式回复时宿主会多渲染
+ * 一个 working 项）或窗口变窄时，插件那一项就会被压缩到看不见（不是不渲染，是被压扁）。
+ * 这里给状态栏各项加一道“不许压缩 / 不许换行”的保险，保证额度那条一直可读。
+ */
+const BAR_PIN_ID = "codex-usage-bar-pin";
+function pinStatusBarItems(doc) {
+	if (doc.getElementById(BAR_PIN_ID)) return;
+	const el = doc.createElement("style");
+	el.id = BAR_PIN_ID;
+	el.textContent = `.statusbar .status-item,.statusbar .status-action,.statusbar .status-conn{flex:0 0 auto;white-space:nowrap}`;
+	doc.head.appendChild(el);
+}
+
+// enabled 插件的 client bundle 会在启动时预加载；不要等用户打开额度面板才加这条规则。
+if (typeof document !== "undefined") pinStatusBarItems(document);
+
 export default {
 	mount(container, ctx) {
 		const doc = container.ownerDocument;
 		injectStyle(doc);
+		pinStatusBarItems(doc);
 
 		container.innerHTML = `
 <div class="cu">
@@ -316,16 +338,19 @@ export default {
 		function renderCost(s) {
 			const excluded = Number(s.subscriptionMessagesExcluded) || 0;
 			const missing = Number(s.missingCostMessages) || 0;
+			const auxiliary = Number(s.auxiliaryCalls) || 0;
+			const provider = s.selectedProvider || "当前按量 provider";
+			const fullLedger = s.costSource === "session-ledger";
 			return `
 	<div class="cu-card">
-		<div class="cu-k"><span>本会话按量模型成本</span><span>${s.rateStale ? "汇率来自缓存" : "实时汇率"}</span></div>
+		<div class="cu-k"><span>本会话 ${esc(provider)} 成本</span><span>${fullLedger ? "完整会话账本" : "当前上下文回退"}</span></div>
 		<div class="cu-big">¥${esc(money(s.cny))}</div>
 		<div class="cu-sub">≈ $${esc(money(s.usd, 4))} · 1 USD = ${esc(s.rate)} CNY · 汇率时间 ${esc(fmtTime(s.rateAt))}${
 			s.rateError ? ` · 抓取失败：${esc(s.rateError)}` : ""
 		}</div>
-		<div class="cu-sub">已纳入 ${esc(s.meteredMessages)} 次按量调用 · 已剔除 ${esc(excluded)} 次 Codex 订阅调用${
-			missing ? ` · ${esc(missing)} 次调用缺少成本字段` : ""
-		}</div>
+		<div class="cu-sub">已纳入 ${esc(s.meteredMessages)} 次 ${esc(provider)} 回复${
+			auxiliary ? ` · ${esc(auxiliary)} 次压缩/摘要调用` : ""
+		} · 已排除 ${esc(excluded)} 次 Codex 订阅调用${missing ? ` · ${esc(missing)} 次调用缺少成本字段` : ""}</div>
 	</div>`;
 		}
 
