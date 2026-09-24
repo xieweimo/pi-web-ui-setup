@@ -13,7 +13,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 
-const marker = "plan-inline-marker-v1";
+const marker = "plan-inline-marker-v2";
+const snapshotMarker = "plan-marker-snapshot-v2";
+const restoreMarker = "plan-marker-restore-v2";
 const server = locateWebUiFile("dist", "server");
 if (!server || !fs.existsSync(server)) {
 	console.error("✗ 找不到 pi-web-ui 的 dist/server");
@@ -48,11 +50,16 @@ const guidanceEn = [
 	"- Write a marker whenever a step changes; omit active after all work finishes.",
 ];
 function fail(lang, text, textEn) { return { applied: false, error: pick(lang, text, textEn) }; }
-function emitPlan(ctx, steps, activeStepId) {
+function emitPlan(ctx, steps, activeStepId, state) {
 	const host = ctx.host;
 	const manager = host?.planManager;
 	if (!manager || typeof manager.setPlan !== "function") return null;
 	const plan = manager.setPlan(ctx.conversationId, steps, activeStepId);
+	// 把状态写回 marker 快照：PlanManager 只在内存里，重启后靠它回填。
+	if (state) {
+		state.steps = plan.steps.map((step) => ({ ...step }));
+		state.activeStepId = plan.activeStepId;
+	}
 	host.emit?.({ type: "plan_updated", conversationId: ctx.conversationId, plan });
 	host.flushSnapshot?.();
 	return plan;
@@ -68,10 +75,15 @@ export const planMarker = {
 	getGuidance(lang) { return lang === "zh" ? guidanceZh : guidanceEn; },
 	init() { return {}; },
 	apply(token, ctx, state, lang) {
-		void state;
-		const current = ctx.host?.planManager?.getPlan?.(ctx.conversationId);
-		if (!ctx.host?.planManager) return fail(lang, "任务看板服务不可用", "Plan board service is unavailable");
-		if (token.op === "clear") { emitPlan(ctx, [], undefined); return { applied: true }; }
+		const manager = ctx.host?.planManager;
+		if (!manager) return fail(lang, "任务看板服务不可用", "Plan board service is unavailable");
+		// PlanManager 只活在内存里：服务重启后计划会丢，所以先用会话快照回填，
+		// 再把每次变更写回快照。/*plan-marker-snapshot-v2*/
+		let current = manager.getPlan?.(ctx.conversationId) ?? null;
+		if (!current && Array.isArray(state?.steps) && state.steps.length) {
+			current = emitPlan(ctx, state.steps, state.activeStepId ?? null, state);
+		}
+		if (token.op === "clear") { emitPlan(ctx, [], undefined, state); return { applied: true }; }
 		if (token.op === "new") {
 			if (!token.args.length) return fail(lang, "plan:new 至少需要一个步骤", "plan:new needs at least one step");
 			const steps = token.args.map((raw, index) => {
@@ -83,7 +95,7 @@ export const planMarker = {
 				const hit = steps.find((step) => step.id === active);
 				if (hit) hit.status = "in_progress";
 			}
-			emitPlan(ctx, steps, active);
+			emitPlan(ctx, steps, active, state);
 			return { applied: true };
 		}
 		if (token.op === "active") {
@@ -91,7 +103,7 @@ export const planMarker = {
 			if (!current || !active) return fail(lang, "没有可切换的任务看板步骤", "No plan step is available to activate");
 			const steps = current.steps.map((step) => ({ ...step, status: step.id === active ? "in_progress" : step.status }));
 			if (!steps.some((step) => step.id === active)) return fail(lang, "找不到步骤 " + active, "Step " + active + " was not found");
-			emitPlan(ctx, steps, active);
+			emitPlan(ctx, steps, active, state);
 			return { applied: true };
 		}
 		if (token.op === "set") {
@@ -108,7 +120,7 @@ export const planMarker = {
 			const steps = current.steps.map((step) => updates.has(step.id) ? { ...step, status: updates.get(step.id) } : { ...step });
 			const active = token.kwargs.active !== undefined ? token.kwargs.active : undefined;
 			if (active && !steps.some((step) => step.id === active)) return fail(lang, "找不到活动步骤 " + active, "Active step " + active + " was not found");
-			emitPlan(ctx, steps, active);
+			emitPlan(ctx, steps, active, state);
 			return { applied: true };
 		}
 		return fail(lang, "未知 plan 操作：" + token.op, "Unknown plan operation: " + token.op);
@@ -133,6 +145,33 @@ try {
 	replaceOne(indexFile, "registerMarker(renameMarker);", "registerMarker(renameMarker);\n    registerMarker(planMarker);", "marker registration");
 	replaceOne(indexFile, "export { todoMarker, notifyMarker, renameMarker };", "export { todoMarker, notifyMarker, renameMarker, planMarker };", "marker export");
 	replaceOne(serviceFile, "const ctx = {\n                conversationId,\n                notify: (msg, level, msgEn) => {", "const ctx = {\n                conversationId,\n                host: this.host,\n                notify: (msg, level, msgEn) => {", "marker context");
+	replaceOne(
+		serviceFile,
+		`        const getOrInit = (ns) => {
+            let st = states.get(ns);
+            if (st !== undefined)
+                return st;
+            if (ns === TODO_NAMESPACE)
+                st = this.getState(conversationId, ns, initTodoState);
+            else {
+                const marker = getMarker(ns);
+                st = marker?.init ? marker.init() : {};
+            }
+            states.set(ns, st);
+            return st;
+        };`,
+		`        const getOrInit = (ns) => {
+            let st = states.get(ns);
+            if (st !== undefined)
+                return st;
+            // ${snapshotMarker}：先读会话快照（服务重启后靠它回填），再回落 marker.init()。
+            const marker = getMarker(ns);
+            st = this.getState(conversationId, ns, () => (ns === TODO_NAMESPACE ? initTodoState() : marker?.init ? marker.init() : {}));
+            states.set(ns, st);
+            return st;
+        };`,
+		"marker snapshot load",
+	);
 	// plan marker 需要真实 AgentService 的 PlanManager；此前只给 marker-service
 	// 的 ctx 注入 host，却遗漏了构造 MarkerService 时传入该字段，导致运行时必报
 	// “Plan board service is unavailable”。
@@ -149,6 +188,28 @@ try {
             flushSnapshot: () => this.flushSnapshot(),
             emit: (msg) => this.emit(msg),`,
 		"plan marker host",
+	);
+	// 页面加载/下发状态时也要能自动回填：否则重启后看板要等到下次写标记才回来。
+	replaceOne(
+		agentFile,
+		`    /** 任务计划管理器（Plan Mode / Step State Machine）。 */
+    planManager = new PlanManager();`,
+		`    /** 任务计划管理器（Plan Mode / Step State Machine）。 */
+    planManager = new PlanManager();
+    /** ${restoreMarker}：PlanManager 只在内存里，服务重启后从会话快照回填看板。 */
+    restorePlanFromSnapshot(convId) {
+        if (!convId) return null;
+        const snap = this.markerSvc?.getRawState?.(convId, "plan");
+        if (!snap || !Array.isArray(snap.steps) || snap.steps.length === 0) return null;
+        return this.planManager.setPlan(convId, snap.steps, snap.activeStepId ?? undefined);
+    }`,
+		"plan restore helper",
+	);
+	replaceOne(
+		agentFile,
+		`            plan: this.planManager.getPlan(this.activeId),`,
+		`            plan: this.planManager.getPlan(this.activeId) ?? this.restorePlanFromSnapshot(this.activeId), /*${restoreMarker}*/`,
+		"plan restore on snapshot",
 	);
 	if (!bundle || !fs.existsSync(bundle)) throw new Error("找不到 web bundle");
 	let web = fs.readFileSync(bundle, "utf8");

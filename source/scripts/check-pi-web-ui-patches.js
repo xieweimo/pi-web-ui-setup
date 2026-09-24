@@ -30,6 +30,7 @@ const QUIET = process.argv.includes("--quiet");
 /**
  * 每个补丁落地后的「特征字符串」断言表。
  * file: server = dist/server 下的服务端产物；web = web/dist/assets 下的前端 bundle；html = web/dist/index.html
+ * marker 可以是字符串或字符串数组：数组内每一项都必须命中才算已落地。
  * 新增补丁时必须同时补进这张表，否则校验会漏项（漏项按失败处理）。
  */
 const MARKERS = {
@@ -42,7 +43,7 @@ const MARKERS = {
 	"patch-pi-web-ui-topbar-menu-buttons.js": { file: "web", marker: "topbar-menu-buttons-patch" },
 	"patch-pi-web-ui-plugin-topbar-cache.js": { file: "web", marker: "plugin-topbar-cache-patch-v2" },
 	"patch-pi-web-ui-plan-board-clear.js": { file: "web", marker: "plan-board-clear-no-confirm-v1" },
-	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: "plan-inline-marker-v1" },
+	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: ["plan-inline-marker-v2", "plan-marker-snapshot-v2", "plan-marker-restore-v2"] },
 	"patch-pi-web-ui-dangling-tool-calls.js": { file: "server", marker: "dangling-active-chain-filter-v2" },
 	"apply-stop-button.ps1": { file: "html", marker: "stopPulse" },
 };
@@ -151,7 +152,7 @@ pass("profile", `pi-${piVer}_web-${webVer}.json（${profile.patches.length} 项�
 const markersByKind = new Map();
 for (const spec of Object.values(MARKERS)) {
 	if (!markersByKind.has(spec.file)) markersByKind.set(spec.file, []);
-	markersByKind.get(spec.file).push(spec.marker);
+	markersByKind.get(spec.file).push(...(Array.isArray(spec.marker) ? spec.marker : [spec.marker]));
 }
 for (const [kind, markers] of markersByKind) {
 	if (kind === "html") continue; // index.html 不是 JS，无需语法检查
@@ -179,14 +180,20 @@ for (const rel of profile.patches) {
 		fail(`patch ${base}`, "未登记到本脚本的特征字符串表，无法校验");
 		continue;
 	}
-	if (readAllOf(spec.file).includes(spec.marker)) {
+	const wanted = Array.isArray(spec.marker) ? spec.marker : [spec.marker];
+	const before = readAllOf(spec.file);
+	if (wanted.every((m) => before.includes(m))) {
 		pass(`patch ${base}`, "已落地");
 		continue;
 	}
 	// 缺失才实际执行：0=刚补上，2=锚点失效（源码变了）
 	const r = runPatch(rel);
 	if (r.code === 0) {
-		pass(`patch ${base}`, "已重新应用");
+		// 补丁可能只命中一半（退出 0 却只改了一处）：重打后必须逐项复验。
+		const after = readAllOf(spec.file);
+		const stillMissing = wanted.filter((m) => !after.includes(m));
+		if (stillMissing.length === 0) pass(`patch ${base}`, "已重新应用");
+		else fail(`patch ${base}`, `重新应用后仍缺少标记：${stillMissing.join(", ")}`);
 	} else if (r.code === 2) {
 		fail(`patch ${base}`, "锚点失效：pi-web-ui 源码已变化，必须适配");
 	} else {
