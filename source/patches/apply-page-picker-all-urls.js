@@ -26,6 +26,19 @@
 const fs = require("fs");
 const path = require("path");
 
+// 【已退役 2026-09】全站模式已源码化：
+//   projects/page-picker-extension/extension/src/shared/bridge.ts（PIWORK_FULL_SITE_MODE）
+//   projects/page-picker-extension/extension/src/background.ts（roleOf / openHttpPages / pages）
+// 正确做法是源码构建：node projects/page-picker-extension/extension/build.mjs
+// 本脚本直接改构建产物，会在下次 build 时被覆盖，并可能叠加出重复的放行分支。
+// 因此默认拒绝执行；确需临时改产物时显式传 --i-understand-this-is-retired。
+if (!process.argv.includes("--i-understand-this-is-retired")) {
+	console.error("✗ 本补丁已退役：全站模式已在扩展源码中实现，请改用源码构建：");
+	console.error("    node projects/page-picker-extension/extension/build.mjs");
+	console.error("  （确需临时改写构建产物时，再显式传 --i-understand-this-is-retired）");
+	process.exit(3);
+}
+
 const root = path.resolve(__dirname, "..");
 const dirFlag = process.argv.indexOf("--dir");
 const extDir =

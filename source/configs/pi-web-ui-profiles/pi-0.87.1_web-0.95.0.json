@@ -3,12 +3,14 @@
   "piWebUiVersion": "0.95.0",
   "patches": [
     "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-plugin-per-client-conversation.js",
     "patches/patch-pi-web-ui-topbar-menu-buttons.js",
     "patches/patch-pi-web-ui-plugin-topbar-cache.js",
     "patches/patch-pi-web-ui-plan-board-clear.js",
     "patches/patch-pi-web-ui-plan-marker.js",
     "patches/patch-pi-web-ui-dangling-tool-calls.js",
-    "patches/apply-stop-button.ps1"
+    "patches/patch-pi-web-ui-sw-entry-revalidate.js",
+    "patches/patch-pi-web-ui-wechat-ilink.js"
   ],
-  "notes": "pi 0.87.1（pi-web-ui 0.95.0 自带且默认生效的 SDK 副本）+ pi-web-ui 0.95.0。七项现役补丁均已在新产物上重新命中并通过语法校验：plugin-live-model、topbar-menu-buttons、plugin-topbar-cache、plan-board-clear、plan-marker、dangling-tool-calls、stop-button。quick-phrase-queue 继续只执行 --remove，用于清除旧 ⏳ 注入及旧 Service Worker 缓存，不列入现役补丁；usage-cost、hide-forked-sessions、permanent-project-ignore、recovery-ui 继续退役。0.95.0 新增 manifest 严格校验，因此四个自有插件均明确声明 apiVersion: 2，并保留与实际宿主 API 使用一致的 permissions。pi 0.87.0 的破坏性变更（shouldStopAfterTurn 移除、ContextEditEntry、SessionManager canonical context、TurnEndEvent/AgentBeforeSettleEvent）已检索：PIwork 插件不直接使用这些 SDK 接口；pi-subagents 0.71.0 明确支持 Pi 0.87 context edits。升级后需重新安装插件、重启正式服务，并执行秒级补丁检查与真实页面检查。"
+  "notes": "pi 0.87.1（pi-web-ui 0.95.0 自带且默认生效的 SDK 副本）+ pi-web-ui 0.95.0。当前 profile 共 9 项补丁；其中六项现役前端/服务端补丁均已在新产物上重新命中并通过语法校验：plugin-live-model、topbar-menu-buttons、plugin-topbar-cache、plan-board-clear、plan-marker、dangling-tool-calls。停止按钮已由 pi-web-ui 0.95.0 上游原生 `stop-pulse` 覆盖，`apply-stop-button.ps1` 仅保留给历史版本 profile，不再在当前版本执行。quick-phrase-queue 继续只执行 --remove，用于清除旧 ⏳ 注入及旧 Service Worker 缓存，不列入现役补丁；usage-cost、hide-forked-sessions、permanent-project-ignore、recovery-ui 继续退役。0.95.0 新增 manifest 严格校验，因此四个自有插件均明确声明 apiVersion: 2，并保留与实际宿主 API 使用一致的 permissions。pi 0.87.0 的破坏性变更（shouldStopAfterTurn 移除、ContextEditEntry、SessionManager canonical context、TurnEndEvent/AgentBeforeSettleEvent）已检索：PIwork 插件不直接使用这些 SDK 接口；pi-subagents 0.71.0 明确支持 Pi 0.87 context edits。升级后需重新安装插件、重启正式服务，并执行秒级补丁检查与真实页面检查。sw-entry-revalidate（2026-09-25 新增）让 Service Worker 对入口 bundle 强制回源重校验：前端补丁都是就地改 `web/dist/assets/index-<hash>.js`（文件名不变），而 /assets 是 immutable 强缓存 + SW cache-first，不修这条链就会出现「补丁已落地、浏览器还在跑老代码」。index.html 的一次性缓存自愈标记由 `scripts/pi-web-ui-entry-cache-bust.js` 统一维护（key 与 bundle 内容 hash 绑定，启动器与秒级校验都会自动对齐），quick-phrase-queue 不再自行注入旧版挡块。详见 docs/pi-web-ui-前端补丁缓存失效机制.md。plugin-per-client-conversation（2026-09-25 新增）让插件快照支持按浏览器客户端（clientId）取该页面正在看的对话、并让全局兜底跳过子代理会话：过去只给「全客户端最近活跃对话」，导致多标签/并行对话/子代理时额度状态栏串页（模型选了 DeepSeek 却显示 openai-codex 的额度窗口）。额度插件据此改成按页面各算一份并定向下发，冲突页面自行接管底部状态栏；自检脚本新增「插件快照会话 == 本页面会话」断言。"
 }

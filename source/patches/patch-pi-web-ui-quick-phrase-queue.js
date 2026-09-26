@@ -35,30 +35,20 @@ if (!target) {
 }
 
 /**
+ * 一次性缓存清理：统一委托给 scripts/pi-web-ui-entry-cache-bust.js。
+ *
  * 补丁曾经直接改 bundle 内容却保留 Vite 原文件名，Service Worker 又对 /assets 使用
  * cache-first，结果即使代码已撤回，浏览器仍可能长期拿到旧的 ⏳ 版本。
- *
- * 不能给主模块改名或加 query：其他 Vite chunk 会按原文件名反向 import 主模块，改 URL
- * 会制造两个模块实例或直接 404。这里在 index.html 前置一个“一次性缓存清理”：每个干净
- * bundle hash 在每个浏览器只执行一次；若真删到了旧缓存，自动 reload 一次再加载干净代码。
+ * 现在这份逻辑（key 与当前 bundle 内容 hash 绑定、先删缓存再强制 cache:"reload" 回源、
+ * 只重载一次）由入口缓存自愈模块统一维护，本补丁不再自行注入旧版挡块。
  */
 function installOneTimeCacheCleanup() {
-	const distDir = path.dirname(path.dirname(target));
-	const indexFile = path.join(distDir, "index.html");
-	if (!fs.existsSync(indexFile)) return false;
-	const hash = crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex").slice(0, 12);
-	const assetUrl = `/assets/${path.basename(target)}`;
-	const begin = "<!-- piwork-quick-queue-cache-clean:start -->";
-	const end = "<!-- piwork-quick-queue-cache-clean:end -->";
-	const cleanup = `${begin}\n<script>(()=>{const k=${JSON.stringify(`piwork:quick-queue-clean:${hash}`)},u=new URL(${JSON.stringify(assetUrl)},location.origin).href;if(!(\"caches\" in window)||localStorage.getItem(k)===\"1\")return;caches.keys().then(a=>Promise.all(a.map(async n=>(await caches.open(n)).delete(u)))).then(a=>{localStorage.setItem(k,\"1\");if(a.some(Boolean))location.reload()}).catch(()=>{})})()</script>\n${end}`;
-	const html = fs.readFileSync(indexFile, "utf8");
-	const block = new RegExp(`${begin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${end.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
-	let out;
-	if (block.test(html)) out = html.replace(block, cleanup);
-	else out = html.replace(/(?=\s*<script type="module")/, `\n\t${cleanup}\n`);
-	if (out === html) return false;
-	fs.writeFileSync(indexFile, out, "utf8");
-	return true;
+	try {
+		const { refreshEntryCacheBust } = require("../scripts/pi-web-ui-entry-cache-bust.js");
+		return refreshEntryCacheBust().changed;
+	} catch {
+		return false;
+	}
 }
 /** 0.94.1 起上游已内建右键排队（chip 的 onContextMenu → send(e,true)），
  *  我们额外挂的 ⏳ 按钮不再需要 —— 带 --remove 运行即把它从 bundle 里撤掉（反向替换，幂等）。 */

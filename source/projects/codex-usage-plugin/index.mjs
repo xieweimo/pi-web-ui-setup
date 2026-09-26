@@ -490,7 +490,7 @@ function contextCostBreakdown(conv, cfg) {
 
 const sessionFileCache = new Map();
 
-/** 用 conversationId 在 pi 会话目录中定位完整 JSONL 账本；只缓存路径，不缓存金额。 */
+/** 用旧版宿主的持久 conversationId 在 pi 会话目录中定位完整 JSONL 账本；只缓存路径，不缓存金额。 */
 function findSessionFile(conversationId) {
 	const id = String(conversationId ?? "").trim();
 	if (!id || !/^[A-Za-z0-9_-]{6,128}$/.test(id)) return null;
@@ -545,9 +545,23 @@ function usageTotal(usage) {
  * - compaction / branch_summary / 带 usage 的工具摘要也是 API 调用，按当时选中的 provider 计入；
  * - JSONL 解析后只使用 provider、父子关系和 usage.cost.total，不存储或广播消息正文。
  */
+/**
+ * 解析完整账本文件：优先使用宿主快照给的 sessionFile。
+ * 短 conversationId（c1/c4）只是内存标识，重启后会变且不等于文件名；仅为旧宿主保留 UUID 回退。
+ */
+function sessionLedgerFile(conv) {
+	const direct = typeof conv?.sessionFile === "string" ? conv.sessionFile.trim() : "";
+	if (direct && existsSync(direct)) return direct;
+	return findSessionFile(conv?.conversationId);
+}
+
+/** 同一刷新轮的账本缓存键必须跨重启稳定，不能用 c1/c4 这类短内存 id。 */
+function costCacheKey(conv, anonymousIndex = 0) {
+	return conv?.sessionFile ?? conv?.conversationId ?? `anonymous:${anonymousIndex}`;
+}
+
 function fullSessionCostBreakdown(conv, cfg) {
-	if (!conv?.conversationId) return null;
-	const file = findSessionFile(conv?.conversationId);
+	const file = sessionLedgerFile(conv);
 	if (!file) return null;
 	let rows;
 	try {
@@ -565,7 +579,15 @@ function fullSessionCostBreakdown(conv, cfg) {
 	} catch {
 		return null;
 	}
-	const entries = rows.filter((e) => e?.type !== "session" && typeof e?.id === "string");
+	return costBreakdownFromRows(rows, cfg);
+}
+
+/**
+ * 汇总已解析的会话行。独立导出以便测试分支选择、损坏行过滤后的账本归属，
+ * 不访问文件系统也不发起网络请求。
+ */
+function costBreakdownFromRows(rows, cfg) {
+	const entries = (Array.isArray(rows) ? rows : []).filter((e) => e?.type !== "session" && typeof e?.id === "string");
 	if (!entries.length) return null;
 	const byId = new Map(entries.map((e) => [e.id, e]));
 	const branch = [];
@@ -718,7 +740,7 @@ function barHint(state) {
 }
 
 /** 供单元测试直接验证识别逻辑；生产代码走 export default。 */
-export { billingProfile, barText, barHint };
+export { billingProfile, barText, barHint, costBreakdownFromRows, costCacheKey, fullSessionCostBreakdown, sessionLedgerFile };
 
 export default {
 	activate(host) {
@@ -729,8 +751,36 @@ export default {
 		/** undici 全局 dispatcher 是否已配置（null = 未尝试）。 */
 		let dispatcherReady = null;
 		let lastState = { kind: "loading", at: Date.now(), statusBar: true };
+		/**
+		 * 已接入的浏览器页面：clientId → 该页面最近一次收到的状态。
+		 * 宿主只会给「全客户端最近活跃对话」，多标签/并行对话/子代理下会串页，
+		 * 所以这里按页面各算一份并定向下发（host.getActiveConversation(clientId)）。
+		 */
+		const clientStates = new Map();
+		/** 最多跟踪这么多页面，防止长时间开着多个标签页时无限增长。 */
+		const MAX_CLIENTS = 8;
+		/**
+		 * 页面心跳过期时间：宿主没有 detach 回调，掉线/关掉的页面只能靠“多久没消息”判死。
+		 * 客户端每 45s 发一次心跳，所以 180s 没动静的一定是幽灵（临时 Edge、关掉的标签页），
+		 * 不清掉它就会一直占着官方槽位那一份状态 —— 表现就是“显示别的对话的额度”。
+		 */
+		const CLIENT_TTL_MS = Number(process.env.PI_CODEX_USAGE_CLIENT_TTL_MS) || 180_000;
 		/** 宿主是否支持官方 bottombar 槽位（manifest.ui 里申报了 codex-usage:bar）。 */
 		const slotBarSupported = typeof host.ui?.update === "function";
+
+		/** 取某个页面当前打开的对话；宿主不支持按客户端取（旧版）时回落全局快照。 */
+		function convFor(clientId) {
+			if (clientId) {
+				try {
+					const scoped = host.getActiveConversation?.(clientId);
+					if (scoped) return scoped;
+				}
+				catch {
+					/* 旧版宿主忽略参数：回落全局 */
+				}
+			}
+			return host.getActiveConversation?.() ?? null;
+		}
 
 		/** 把摘要写进官方 bottombar 槽位（0.90.0+）。失败只记日志，不影响主流程。 */
 		function syncBarSlot(state) {
@@ -750,43 +800,54 @@ export default {
 			}
 		}
 
-		/** 统一附加客户端需要的设置项（状态栏注入开关等），再广播。 */
-		function push(state) {
-			lastState = {
+		/** 统一附加客户端需要的设置项（状态栏注入开关等）。 */
+		function decorate(state) {
+			return {
 				...state,
 				mode: state.mode ?? cfg.mode,
 				statusBar: cfg.statusBar !== false,
 				hideNativeCost: cfg.hideNativeCost !== false,
-				// 宿主支持官方 bottombar 槽位时，状态栏摘要由宿主渲染（下面 syncBarSlot），
-				// 客户端就不再用 DOM 注入 —— 后者在 0.90.0 会被状态栏溢出裁掉。
+				// 宿主支持官方 bottombar 槽位时，状态栏摘要默认由宿主渲染（下面 syncBarSlot）；
+				// 只有「本页面状态与槽位那份状态不一致」时，客户端才按页面自己接管（见 client/entry.mjs）。
 				slotBar: slotBarSupported,
 				serviceProxy: process.env.HTTPS_PROXY || process.env.https_proxy || null,
 				dispatcherReady,
 				refreshSec: Math.min(Math.max(Number(cfg.refreshSec) || 60, 15), 3600),
 			};
-			syncBarSlot(lastState);
-			host.broadcast({ state: lastState });
+		}
+
+		/**
+		 * 下发出口。clientId 有值 = 只发给那个页面（perClient: true，客户端据它按页面渲染）；
+		 * 没有 = 更新官方槽位并全局广播（兼容没跑本插件客户端逻辑的旧页面）。
+		 */
+		function push(state, clientId = null) {
+			const next = decorate(state);
+			if (clientId) {
+				// 只更新状态，不动 seenAt、也不重排：位置代表“最后听到它的时间”，
+				// 否则“我们推给它”会被当成“它还活着”，幽灵页面就永远清不掉了。
+				const entry = clientStates.get(clientId);
+				clientStates.set(clientId, { state: next, seenAt: Number(entry?.seenAt) || Date.now() });
+				while (clientStates.size > MAX_CLIENTS) clientStates.delete(clientStates.keys().next().value);
+				host.sendTo?.(clientId, { state: next, perClient: true });
+				return next;
+			}
+			lastState = next;
+			syncBarSlot(next);
+			host.broadcast({ state: next });
+			return next;
 		}
 
 		function errorState(message, model) {
 			return { kind: "error", at: Date.now(), message, model, mode: cfg.mode };
 		}
 
-		async function refresh(reason) {
-			// 模型切换发生在一次旧刷新尚未结束时，不能丢掉新模型的刷新请求。
-			if (inflight) {
-				pendingRefreshReason = reason;
-				return;
-			}
-			inflight = true;
-			try {
-				const conv = host.getActiveConversation?.() ?? null;
+		/**
+		 * 构建某个对话的完整状态（不负责下发）。
+		 * shared 是本轮刷新共享的账号级数据：汇率、Codex 凭证/用量、按对话缓存的账本。
+		 */
+		async function buildState(conv, reason, shared) {
+			{
 				const model = pickModel(conv);
-				const proxy = resolveProxy(cfg);
-				const auth = readCodexAuth();
-				const modelChanged =
-					model?.provider !== lastState?.model?.provider || model?.model !== lastState?.model?.model;
-
 				const selectedProvider = model?.provider ?? null;
 				const selectedModel = model?.model ?? null;
 				const selectedProfile = billingProfile(selectedProvider, selectedModel, cfg);
@@ -798,10 +859,10 @@ export default {
 							? "metered"
 							: autoMode;
 
-				// 无论当前模型是哪种计费方式，都先构建完整会话账本：订阅页面也要能说明
-				// 排除了多少目录价，按量页面则展示所有 provider 的真实/估算成本拆分。
-				const fx = await getFx(cfg, proxy, host.storage);
-				const cost = fullSessionCostBreakdown(conv, cfg) ?? contextCostBreakdown(conv, cfg);
+				// 每个对话都要算账本：订阅页面也要能说明排除了多少目录价，
+				// 按量页面则展示该对话所有 provider 的真实/估算成本拆分。
+				const fx = shared.fx;
+				const cost = shared.costFor(conv);
 				const providers = cost.providers.map((row) => ({
 					...row,
 					cny: row.usd * fx.rate,
@@ -829,70 +890,129 @@ export default {
 					rateStale: Boolean(fx.stale),
 					rateError: fx.error ?? null,
 					totalMessages: Number(conv?.stats?.totalMessages) || 0,
+					conversationId: conv?.conversationId ?? null,
 				};
 
-				// 选择模型的瞬间先清掉旧数字；网络查询完成后再填入真实额度。
-				if (modelChanged) push({ kind: "loading", at: Date.now(), mode: cfg.mode, reason: "model-change", model });
+				if (selectedBillingMode !== "subscription") {
+					return { kind: "cost", at: Date.now(), mode: cfg.mode, reason, model, ...costSummary };
+				}
+				// Codex 是首个内置订阅 adapter；其他订阅仍能正确排除理论 API 价，
+				// 但没有统一额度 API 时只显示“已识别为订阅”。
+				if (selectedProvider !== CODEX_PROVIDER) {
+					return {
+						kind: "subscription",
+						at: Date.now(),
+						mode: cfg.mode,
+						reason,
+						model,
+						provider: selectedProvider,
+						quotaAvailable: false,
+						message: "已按订阅模式统计；该 provider 暂无内置额度查询适配器",
+						...costSummary,
+					};
+				}
+				if (!shared.auth) {
+					return errorState("未找到 openai-codex 凭证（<agentDir>/auth.json）——请先在 pi 里登录", model);
+				}
+				const expired = shared.auth.expires > 0 && Date.now() > shared.auth.expires;
+				try {
+					// 额度是账号级的：同一轮刷新里多个页面共用一次查询。
+					const usage = await shared.usageFor();
+					const rl = usage?.rate_limit ?? {};
+					return {
+						kind: "subscription",
+						adapter: "codex",
+						quotaAvailable: true,
+						provider: CODEX_PROVIDER,
+						at: Date.now(),
+						mode: cfg.mode,
+						reason,
+						model,
+						plan: usage?.plan_type ?? null,
+						email: maskEmail(usage?.email),
+						limitReached: Boolean(rl.limit_reached),
+						allowed: rl.allowed !== false,
+						primary: normWindow(rl.primary_window),
+						secondary: normWindow(rl.secondary_window),
+						resets: Number(usage?.rate_limit_reset_credits?.available_count) || 0,
+						expired,
+						...costSummary,
+					};
+				} catch (err) {
+					host.log("usage fetch failed:", String(err?.message ?? err));
+					return errorState(String(err?.message ?? err), model);
+				}
+			}
+		}
 
-				if (selectedBillingMode === "subscription") {
-					// Codex 是首个内置订阅 adapter；其他订阅仍能正确排除理论 API 价，
-					// 但没有统一额度 API 时只显示“已识别为订阅”。
-					if (selectedProvider !== CODEX_PROVIDER) {
-						push({
-							kind: "subscription",
-							at: Date.now(),
-							mode: cfg.mode,
-							reason,
-							model,
-							provider: selectedProvider,
-							quotaAvailable: false,
-							message: "已按订阅模式统计；该 provider 暂无内置额度查询适配器",
-							...costSummary,
-						});
-						return;
-					}
-					if (!auth) {
-						push(errorState("未找到 openai-codex 凭证（<agentDir>/auth.json）——请先在 pi 里登录", model));
-						return;
-					}
-					const expired = auth.expires > 0 && Date.now() > auth.expires;
-					try {
-						const usage = await fetchUsage(cfg, proxy, auth);
-						const rl = usage?.rate_limit ?? {};
-						push({
-							kind: "subscription",
-							adapter: "codex",
-							quotaAvailable: true,
-							provider: CODEX_PROVIDER,
-							at: Date.now(),
-							mode: cfg.mode,
-							reason,
-							model,
-							plan: usage?.plan_type ?? null,
-							email: maskEmail(usage?.email),
-							limitReached: Boolean(rl.limit_reached),
-							allowed: rl.allowed !== false,
-							primary: normWindow(rl.primary_window),
-							secondary: normWindow(rl.secondary_window),
-							resets: Number(usage?.rate_limit_reset_credits?.available_count) || 0,
-							expired,
-							...costSummary,
-						});
-					} catch (err) {
-						host.log("usage fetch failed:", String(err?.message ?? err));
-						push(errorState(String(err?.message ?? err), model));
-					}
-					return;
+		/** 一轮刷新：先按页面各算一份并定向下发，再更新官方槽位/全局广播。 */
+		async function refresh(reason) {
+			// 模型切换发生在一次旧刷新尚未结束时，不能丢掉新模型的刷新请求。
+			if (inflight) {
+				pendingRefreshReason = reason;
+				return;
+			}
+			inflight = true;
+			try {
+				const proxy = resolveProxy(cfg);
+				const shared = {
+					auth: readCodexAuth(),
+					fx: await getFx(cfg, proxy, host.storage),
+					costs: new Map(),
+					/** 同一对话只解析一次 JSONL（多个页面可能指向同一对话）。 */
+					costFor(conv) {
+						// sessionFile 是跨重启稳定的唯一键；短 conversationId（c1/c4）会在不同页面复用。
+						const key = costCacheKey(conv, this.costs.size);
+						if (!this.costs.has(key)) {
+							this.costs.set(key, fullSessionCostBreakdown(conv, cfg) ?? contextCostBreakdown(conv, cfg));
+						}
+						return this.costs.get(key);
+					},
+					usageLoaded: false,
+					usageError: null,
+					usage: null,
+					/** Codex 额度查询（账号级）：一轮刷新只发一次请求。 */
+					async usageFor() {
+						if (!this.usageLoaded) {
+							this.usageLoaded = true;
+							try {
+								this.usage = await fetchUsage(cfg, proxy, this.auth);
+							} catch (err) {
+								this.usageError = err;
+							}
+						}
+						if (this.usageError) throw this.usageError;
+						return this.usage;
+					},
+				};
+
+				// 先清掉过期页面（幽灵）：它们不会回心跳，留着会抢走官方槽位那份状态。
+				const now = Date.now();
+				for (const [id, entry] of [...clientStates]) {
+					if (now - Number(entry?.seenAt ?? 0) > CLIENT_TTL_MS) clientStates.delete(id);
 				}
 
-				push({
-					kind: "cost",
-					at: Date.now(),
-					mode: cfg.mode,
-					reason,
-					model,
-					...costSummary,
-				});
+				for (const clientId of [...clientStates.keys()]) {
+					const conv = convFor(clientId);
+					const model = pickModel(conv);
+					const previous = clientStates.get(clientId)?.state ?? lastState;
+					// 选择模型的瞬间先清掉旧数字；网络查询完成后再填入真实额度。
+					if (model?.provider !== previous?.model?.provider || model?.model !== previous?.model?.model) {
+						push({ kind: "loading", at: Date.now(), mode: cfg.mode, reason: "model-change", model }, clientId);
+					}
+					push(await buildState(conv, reason, shared), clientId);
+				}
+
+				// 官方槽位 / 全局广播：有页面在跟踪时跟随最近接入的那个（明确有冲突的页面会按页面接管），
+				// 没有页面时用全局快照兜底。
+				const tracked = [...clientStates.values()].map((entry) => entry.state);
+				if (tracked.length) {
+					lastState = tracked[tracked.length - 1];
+					syncBarSlot(lastState);
+					host.broadcast({ state: lastState });
+				} else {
+					push(await buildState(host.getActiveConversation?.() ?? null, reason, shared));
+				}
 			} finally {
 				inflight = false;
 				const queued = pendingRefreshReason;
@@ -963,13 +1083,29 @@ export default {
 			timer.unref?.();
 		}
 
-		const offMessage = host.onMessage((payload) => {
+		/** 记住这个页面（clientId），后续刷新会按它的对话各算一份并定向下发。 */
+		function noteClient(clientId) {
+			const id = String(clientId ?? "").trim();
+			if (!id) return null;
+			const existing = clientStates.get(id);
+			const now = Date.now();
+			// 重排到末尾：Map 顺序 = 最后听到心跳的顺序，槽位兜底就跟随“最近活着的页面”。
+			clientStates.delete(id);
+			clientStates.set(id, { state: existing?.state ?? lastState, seenAt: now });
+			if (existing) return id;
+			while (clientStates.size > MAX_CLIENTS) clientStates.delete(clientStates.keys().next().value);
+			return id;
+		}
+
+		const offMessage = host.onMessage((payload, from) => {
+			const clientId = noteClient(from);
 			if (payload?.action === "refresh") void refresh("client");
-			else if (payload?.action === "hello") push(lastState);
+			// hello：不把全局状态冒充成“这个页面的状态”（那正是要修的串页），直接重算。
+			else if (payload?.action === "hello") void refresh("hello");
 		});
 		const offAttach = host.onAttach((clientId) => {
+			noteClient(clientId);
 			void refresh("attach");
-			host.sendTo?.(clientId, { state: lastState });
 		});
 		// 宿主在 setModel() 成功后会立即发出此事件；无需等下一轮回复或刷新周期。
 		const offConv = host.onConversationChanged(() => void refresh("conversation"));

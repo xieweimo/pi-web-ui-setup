@@ -13,9 +13,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 
-const marker = "plan-inline-marker-v2";
+const marker = "plan-inline-marker-v4";
 const snapshotMarker = "plan-marker-snapshot-v2";
 const restoreMarker = "plan-marker-restore-v2";
+const strictSyntaxMarker = "plan-marker-strict-syntax-v3";
+const legacyMigrationMarker = "plan-marker-legacy-status-migration-v4";
 const server = locateWebUiFile("dist", "server");
 if (!server || !fs.existsSync(server)) {
 	console.error("✗ 找不到 pi-web-ui 的 dist/server");
@@ -70,6 +72,9 @@ function splitStep(raw, fallbackId) {
 	if (eq > 0) return { id: text.slice(0, eq).trim(), title: text.slice(eq + 1).trim() };
 	return { id: String(fallbackId), title: text };
 }
+function isMisplacedStatus(title) {
+	return /(?:^|=)(pending|in_progress|done|failed)\s*$/i.test(title); // ${strictSyntaxMarker}
+}
 export const planMarker = {
 	name: PLAN_NAMESPACE,
 	getGuidance(lang) { return lang === "zh" ? guidanceZh : guidanceEn; },
@@ -86,14 +91,16 @@ export const planMarker = {
 		if (token.op === "clear") { emitPlan(ctx, [], undefined, state); return { applied: true }; }
 		if (token.op === "new") {
 			if (!token.args.length) return fail(lang, "plan:new 至少需要一个步骤", "plan:new needs at least one step");
-			const steps = token.args.map((raw, index) => {
-				const step = splitStep(raw, index + 1);
-				return { ...step, status: "pending" };
-			});
+			const parsed = token.args.map((raw, index) => splitStep(raw, index + 1));
+			if (parsed.some((step) => !step.id || !step.title)) return fail(lang, "步骤 id 与标题不能为空", "Plan step id and title cannot be empty");
+			if (parsed.some((step) => isMisplacedStatus(step.title))) return fail(lang, "plan:new 不接受状态；请用 plan:set:id=done", "plan:new does not accept statuses; use plan:set:id=done");
+			if (new Set(parsed.map((step) => step.id)).size !== parsed.length) return fail(lang, "步骤 id 不能重复", "Plan step ids must be unique");
+			const steps = parsed.map((step) => ({ ...step, status: "pending" }));
 			const active = token.kwargs.active || undefined;
 			if (active) {
 				const hit = steps.find((step) => step.id === active);
-				if (hit) hit.status = "in_progress";
+				if (!hit) return fail(lang, "找不到活动步骤 " + active, "Active step " + active + " was not found");
+				hit.status = "in_progress";
 			}
 			emitPlan(ctx, steps, active, state);
 			return { applied: true };
@@ -201,7 +208,12 @@ try {
         if (!convId) return null;
         const snap = this.markerSvc?.getRawState?.(convId, "plan");
         if (!snap || !Array.isArray(snap.steps) || snap.steps.length === 0) return null;
-        return this.planManager.setPlan(convId, snap.steps, snap.activeStepId ?? undefined);
+        // ${legacyMigrationMarker}：早期错误写法把 =done 放进标题；恢复时一次性还原成真实状态。
+        const steps = snap.steps.map((step) => {
+            const match = /^(.+?)=(pending|in_progress|done|failed)\\s*$/i.exec(String(step.title ?? ""));
+            return match ? { ...step, title: match[1], status: match[2].toLowerCase() } : step;
+        });
+        return this.planManager.setPlan(convId, steps, snap.activeStepId ?? undefined);
     }`,
 		"plan restore helper",
 	);

@@ -1,24 +1,23 @@
-# pi-web-ui 停止按钮增强补丁
+# pi-web-ui 停止按钮历史补丁（已退役）
 
-来源：对 `C:\Users\X\AppData\Roaming\npm\node_modules\pi-web-ui\web\dist\index.html` 的定制。
+> 状态：**pi-web-ui 0.95.0 起已退役，不得加入新版本 profile。**
 
-## 注入位置
+历史上，`apply-stop-button.ps1` 会在 `web/dist/index.html` 的 `</head>` 前注入一段 `.btn.stop` CSS，用硬编码的 `#dc2626` 和 `stopPulse` 动画强调生成中的停止按钮。
 
-在 `</head>` 之前插入下面的 `<style>` 块（原 `dist/index.html` 中紧接在
-`<link rel="stylesheet" crossorigin href="/assets/index-*.css">` 之后）。
+当前上游已经原生提供等价且更好的实现：
 
-## 补丁内容
-
-```html
-<style>
-	/* 停止按钮增强：醒目红色 + 脉冲提示 */
-	.btn.stop{background:#dc2626 !important;border-color:#dc2626 !important;color:#fff !important;box-shadow:0 0 0 0 rgba(220,38,38,.7) !important;animation:stopPulse 1.3s ease-in-out infinite}
-	.btn.stop:hover:not(:disabled){background:#ef4444 !important;border-color:#ef4444 !important}
-	@keyframes stopPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 12px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
-</style>
+```css
+.inputbox .btn.stop {
+  background: var(--stop-red);
+  border-color: var(--stop-red);
+  animation: stop-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 ```
 
-## 注意
+它支持主题变量、hover 状态和系统“减少动画”偏好。历史补丁的 `!important` 只会覆盖上游主题值，既不增加功能，也增加升级风险。
 
-- 这是对 npm 包构建产物（`dist/index.html`）的直接修改，**升级 pi-web-ui 会被覆盖**，需要重新应用。
-- 若要把该定制固化，理想做法是向 pi-web-ui 上游提 PR 或改用正式的主题/扩展机制，而不是直接改 dist。
+## 保留脚本的原因
+
+`patches/apply-stop-button.ps1` 没有删除，以便极旧版本 profile 仍可按当时的方式恢复样式；但脚本会先检测 `stop-pulse` / `--stop-red`，一旦发现上游已有实现就输出提示并不改文件。
+
+当前版本应只使用上游默认样式，不需要 `piwork-stop-style` 插件，也不需要 DOM 授权。

@@ -2,8 +2,17 @@
 /** [[plan:...]] 补丁的服务端全链路 mock 测试。 */
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { MarkerService } from "file:///C:/Users/X/AppData/Roaming/npm/node_modules/pi-web-ui/dist/server/marker-service.js";
-import { PlanManager } from "file:///C:/Users/X/AppData/Roaming/npm/node_modules/pi-web-ui/dist/server/plan-manager.js";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { findWebUiRoot } = require("./pi-web-ui-locate.js");
+const webRoot = findWebUiRoot();
+assert.ok(webRoot, "找不到 pi-web-ui 安装目录");
+const serverRoot = path.join(webRoot, "dist", "server");
+const { MarkerService } = await import(pathToFileURL(path.join(serverRoot, "marker-service.js")).href);
+const { PlanManager } = await import(pathToFileURL(path.join(serverRoot, "plan-manager.js")).href);
 
 const emitted = [];
 const settings = { markersEnabled: true, disabledMarkers: [] };
@@ -38,7 +47,7 @@ function makeHost() {
 
 // 防回归：mock 给 host 注入 planManager 不能证明真实 AgentService 也做了这件事。
 const agentService = await fs.readFile(
-	"C:/Users/X/AppData/Roaming/npm/node_modules/pi-web-ui/dist/server/agent-service.js",
+	path.join(serverRoot, "agent-service.js"),
 	"utf8",
 );
 assert.match(
@@ -58,6 +67,15 @@ assert.deepEqual(plan.steps.map((s) => [s.id, s.title, s.status]), [
 	["3", "验证", "pending"],
 ]);
 assert.equal(plan.activeStepId, "1");
+
+// 回归截图中的错误写法：状态被塞进标题时必须拒绝，且不能污染当前看板。
+await markers.handleAssistantText("conv", "[[plan:new:1=确认迁移边界=done,2=完成实施方案=done,active=1]]");
+plan = host.planManager.getPlan("conv");
+assert.deepEqual(plan.steps.map((s) => [s.id, s.title, s.status]), [
+	["1", "调研", "in_progress"],
+	["2", "实现", "pending"],
+	["3", "验证", "pending"],
+]);
 
 await markers.handleAssistantText("conv", "[[plan:set:1=done,2=in_progress,active=2]]");
 plan = host.planManager.getPlan("conv");
@@ -105,6 +123,11 @@ assert.match(
 	agentService,
 	/plan: this\.planManager\.getPlan\(this\.activeId\) \?\? this\.restorePlanFromSnapshot\(this\.activeId\)/,
 	"AgentService 下发状态时必须能回填看板",
+);
+assert.match(
+	agentService,
+	/plan-marker-legacy-status-migration-v4[\s\S]*?title: match\[1\], status: match\[2\]\.toLowerCase\(\)/,
+	"旧看板标题中的 =done 必须在恢复时迁移为真实状态",
 );
 const rawForRestore = markers3.getRawState("conv", "plan");
 assert.ok(

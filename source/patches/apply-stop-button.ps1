@@ -37,6 +37,22 @@ if (-not (Test-Path $html)) {
 
 $content = [System.IO.File]::ReadAllText($html, [System.Text.Encoding]::UTF8)
 
+# pi-web-ui 0.95.0 起原生 `.inputbox .btn.stop` 已有 --stop-red + stop-pulse。
+# 样式在 assets/*.css，不在 index.html；当前脚本只为旧版本 profile 留存，
+# 新版本上绝不再用 !important 覆盖上游主题变量。
+$assets = Join-Path $webRoot 'web\dist\assets'
+$nativeStopStyle = $false
+if (Test-Path $assets) {
+    foreach ($cssFile in Get-ChildItem -Path $assets -Filter '*.css' -File -ErrorAction SilentlyContinue) {
+        $cssText = [System.IO.File]::ReadAllText($cssFile.FullName, [System.Text.Encoding]::UTF8)
+        if ($cssText -match 'stop-pulse' -and $cssText -match '--stop-red') { $nativeStopStyle = $true; break }
+    }
+}
+if ($nativeStopStyle) {
+    Write-Host '上游已内建红色脉冲停止按钮，历史补丁不再应用。' -ForegroundColor Yellow
+    exit 0
+}
+
 if ($content -match 'stopPulse') {
     Write-Host '补丁已存在，跳过。' -ForegroundColor Green
     exit 0

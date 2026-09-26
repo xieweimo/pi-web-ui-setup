@@ -13,6 +13,13 @@ const BAR_ID = "codex-usage-statusbar";
 /** 当前视图 id（与 manifest.id 一致，用于点击状态栏切到本 tab）。 */
 const VIEW_ID = "plugin:codex-usage";
 
+/**
+ * 前端构建标记：面板会显示它，`data-cu-build` 也会带上。
+ * 用来回答“这页面到底跑的是哪一版插件前端”——宿主重启后 epoch 从 0 重来、
+ * 页面自动重新 import 插件前端，光看界面是分不出来的。
+ */
+const CLIENT_BUILD = "per-client-alignment-1";
+
 function esc(s) {
 	return String(s ?? "").replace(
 		/[&<>"']/g,
@@ -106,6 +113,20 @@ function barTitle(state) {
 	return lines.join("\n");
 }
 
+/**
+ * 纯函数：这份插件状态是不是「本页面这个对话」的。
+ * 判据是页面上不依赖插件的原生「消息 N」：宿主重启后活动对话会被重置成“本项目最近一条
+ * 会话”，不一定是你眼前的那个，插件按它算出来的成本就不是本对话的（典型表现：额度变 0）。
+ * 导出来是为了能离线回归（见 tests/state-alignment.test.mjs）。
+ */
+export function matchesPageMessages(state, nativeCount) {
+	if (!state || state.kind === "loading" || state.kind === "error") return true; // 过渡/错误态不做归属判断
+	const reported = Number(state.totalMessages);
+	if (!Number.isFinite(reported)) return true;
+	if (nativeCount === null || nativeCount === undefined || !Number.isFinite(Number(nativeCount))) return true;
+	return reported === Number(nativeCount);
+}
+
 function injectStyle(doc) {
 	if (doc.getElementById(STYLE_ID)) return;
 	const el = doc.createElement("style");
@@ -181,6 +202,14 @@ export default {
 		const updatedEl = root.querySelector(".cu-updated");
 		const badgeEl = root.querySelector(".cu-badge");
 		let state = null;
+		/** 定向发给我这个页面的状态（宿主按 clientId 取“本页面打开的对话”）。 */
+		let myState = null;
+		/** 全局广播那份：官方 bottombar 槽位渲染的就是它。 */
+		let globalState = null;
+		/** 当前 myState 是否与本页面会话对齐（见 stateMatchesPage）。 */
+		let myStateAligned = false;
+		/** 按页面隐藏的宿主槽位项（React 重建后会重新捕获）。 */
+		let hiddenSlot = null;
 
 		// ---- 状态栏摘要注入 ----
 		let barEl = null;
@@ -251,12 +280,93 @@ export default {
 			barEl = null;
 		}
 
+		/** 原生状态栏上的「消息 N」——本页面这个会话的真实消息数（不依赖插件任何数据）。 */
+		function nativeMessageCount() {
+			const bar = doc.querySelector(".statusbar");
+			if (!bar) return null;
+			const item = [...bar.querySelectorAll(".status-item")].find((n) => /会话消息数/.test(n.getAttribute("title") || ""));
+			const m = item ? (item.textContent || "").match(/(\d+)/) : null;
+			return m ? Number(m[1]) : null;
+		}
+
+		/**
+		 * 这份状态是不是「本页面这个对话」的：拿它与原生「消息 N」对齐。
+		 *
+		 * 为什么必须有这道防线：宿主重启后，每个浏览器的活动对话会被重置成
+		 * `SessionManager.continueRecent(cwd)`（本项目最近一条会话），**不一定是你眼前这个**；
+		 * 插件按它算出来的成本就不是本对话的 —— 典型表现就是“重启后额度突然变 0”。
+		 * 对不上就不采用，保留上一次对齐的值并要求服务端重算。
+		 */
+		function stateMatchesPage(next, native) {
+			return matchesPageMessages(next, native === undefined ? nativeMessageCount() : native);
+		}
+
+		let lastRealignAt = 0;
+		/** 状态对不上时要求服务端重算（节流，避免抖）。 */
+		function requestRealign() {
+			const now = Date.now();
+			if (now - lastRealignAt < 10_000) return;
+			lastRealignAt = now;
+			try {
+				ctx.send({ action: "refresh" });
+			} catch {
+				/* ignore */
+			}
+		}
+
+		/**
+		 * 本页面状态与槽位那份状态是否冲突（决定是否接管状态栏）。
+		 * 槽位是全局单例，多标签 / 并行对话 / 重启后都可能渲染别的对话的模型与额度。
+		 */
+		function slotConflicts() {
+			if (!myState && !globalState) return false; // 还没数据：先不动宿主槽位
+			if (!myStateAligned) return true; // 有数据但与本页面对不上 → 不信任槽位
+			if (!globalState) return false;
+			return barText(myState) !== barText(globalState);
+		}
+
+		/** 宿主槽位里属于本插件的那一项（按我们自己的 hint 文本或 ⚡ 前缀认）。 */
+		function findSlotItem() {
+			const bar = doc.querySelector(".statusbar");
+			if (!bar) return null;
+			const hint = globalState ? barTitle(globalState) : null;
+			const items = [...bar.querySelectorAll(".status-action,.status-item")];
+			return (
+				items.find((n) => !n.id && hint && n.getAttribute("title") === hint) ??
+				items.find((n) => !n.id && (n.textContent || "").trim().startsWith("⚡")) ??
+				null
+			);
+		}
+
+		/** 冲突时把宿主那项藏掉（只藏我们自己认出来的那个），不冲突时恢复。 */
+		function syncSlotVisibility() {
+			const item = findSlotItem();
+			if (!item) return;
+			if (slotConflicts()) {
+				if (item.style.display !== "none") {
+					item.style.display = "none";
+					hiddenSlot = item;
+				}
+			} else if (item.style.display === "none" && (hiddenSlot === item || !hiddenSlot)) {
+				item.style.display = "";
+				hiddenSlot = null;
+			}
+		}
+
+		/** 状态栏上要显示的文字：没对齐时宁可标“同步中”，也不显示别的对话的数字。 */
+		function pageBarText() {
+			if (!myStateAligned) return "⚡ 同步中…";
+			return barText(state);
+		}
+
 		function syncBar() {
-			// 宿主支持官方 bottombar 槽位（state.slotBar）时，摘要由宿主渲染：
-			// 0.90.0 把状态栏改成溢出容器后，插件自己插的节点会被挤到不可见区，
-			// 这里就不再注入，只保留「隐藏原生成本项」这一件事。
-			if (state?.slotBar) {
+			// 宿主支持官方 bottombar 槽位（state.slotBar）且与本页面状态一致时，摘要由宿主渲染：
+			// 0.90.0 把状态栏改成溢出容器后，插件自己插的节点会被挤到不可见区。
+			// 只有两者不一致（本页面的对话不是“最近活跃对话”）才按页面自己接管。
+			if (state?.slotBar && !slotConflicts()) {
 				removeBar();
+				if (hiddenSlot?.isConnected) hiddenSlot.style.display = "";
+				hiddenSlot = null;
 				syncNativeCost();
 				return;
 			}
@@ -269,12 +379,15 @@ export default {
 			// 只有在设置里明确关掉「状态栏显示」时才移除。
 			if (state.statusBar === false) {
 				removeBar();
+				if (hiddenSlot?.isConnected) hiddenSlot.style.display = "";
+				hiddenSlot = null;
 				syncNativeCost();
 				return;
 			}
 			if (!placeBar()) return;
+			syncSlotVisibility();
 			syncNativeCost();
-			const text = barText(state);
+			const text = pageBarText();
 			if (barEl.textContent !== text) barEl.textContent = text;
 			const title = barTitle(state);
 			if (barEl.title !== title) barEl.title = title;
@@ -400,11 +513,20 @@ export default {
 		function renderMeta(s) {
 			if (!s) return;
 			const bits = [];
+			if (!myStateAligned) {
+				bits.push("⚠ 这份数据还不是本页面会话的（宿主重启后活动对话被重置）——正在重新对齐，已保留上一次对齐的数值");
+			}
 			if (s.plan) bits.push(`套餐：${s.plan}`);
 			if (s.model?.provider) bits.push(`模型：${s.model.provider}${s.model.model ? ` / ${s.model.model}` : ""}`);
 			if (s.selectedBillingMode) {
 				bits.push(`计费识别：${billingLabel(s.selectedBillingMode)} · ${s.selectedBillingSource || "unknown"} · 置信度 ${s.selectedBillingConfidence || "low"}`);
 				if (s.selectedBillingNote) bits.push(`计费提示：${s.selectedBillingNote}`);
+			}
+			if (s.conversationId) {
+				bits.push(
+					`快照会话：…${String(s.conversationId).slice(-6)} · 消息 ${Number(s.totalMessages) || 0}` +
+						(myState && !slotConflicts() ? "（与底部状态栏同一对话）" : ""),
+				);
 			}
 			bits.push(
 				s.serviceProxy
@@ -413,13 +535,45 @@ export default {
 			);
 			if (s.reason) bits.push(`触发：${s.reason}`);
 			bits.push(`模式：${s.mode ?? "auto"} · 更新于 ${fmtTime(s.at)}`);
+			bits.push(`插件前端构建：${CLIENT_BUILD}`);
 			metaEl.innerHTML = bits.map((b) => `<div>${esc(b)}</div>`).join("");
 		}
 
-		function apply(next) {
-			state = next ?? {};
+		/**
+		 * 给面板挂上可断言的数据钩子（自检脚本用它核对
+		 * “插件这份快照到底是哪个对话”）。
+		 */
+		function syncDebugAttrs() {
+			root.dataset.cuBuild = CLIENT_BUILD;
+			root.dataset.cuPerClient = myState ? "1" : "0";
+			root.dataset.cuAligned = myStateAligned ? "1" : "0";
+			root.dataset.cuConversation = String(state?.conversationId ?? "");
+			root.dataset.cuMessages = String(Number(state?.totalMessages) || 0);
+			root.dataset.cuProvider = String(state?.model?.provider ?? state?.provider ?? "");
+			root.dataset.cuModel = String(state?.model?.model ?? "");
+			root.dataset.cuBarText = pageBarText();
+			root.dataset.cuConflict = slotConflicts() ? "1" : "0";
+		}
+
+		function apply(next, perClient) {
+			if (perClient) {
+				const matches = stateMatchesPage(next);
+				if (!matches && (myState || myStateAligned)) {
+					// 对不上本页面：不采用（避免把别的对话的 0/数字显示出来），保留上一次并对齐。
+					requestRealign();
+				} else {
+					myState = next ?? {};
+					myStateAligned = matches;
+				}
+			} else {
+				// 全局广播只当茶位兜底：与本页面会话对不上就不要（它常是别的对话的）。
+				globalState = stateMatchesPage(next) ? next ?? {} : globalState;
+			}
+			// 面板与状态栏都优先用“本页面那份”；没有定向数据时才退回全局广播。
+			state = myState ?? globalState ?? {};
 			render(state);
 			renderMeta(state);
+			syncDebugAttrs();
 			updatedEl.textContent = `更新于 ${fmtTime(state.at)}`;
 			if (badgeEl) {
 				badgeEl.style.display = state.plan ? "" : "none";
@@ -437,7 +591,7 @@ export default {
 		root.querySelector(".cu-refresh")?.addEventListener("click", onRefreshClick);
 
 		const off = ctx.onData((payload) => {
-			if (payload && typeof payload === "object" && "state" in payload) apply(payload.state);
+			if (payload && typeof payload === "object" && "state" in payload) apply(payload.state, payload.perClient === true);
 		});
 
 		// 每秒同步一次（倒计时 + 原生项隐藏状态，React 重渲染被冲掉后自动补回）
@@ -450,13 +604,26 @@ export default {
 			}
 		}, 1000);
 
+		// 心跳：服务端没有 detach 回调，只能靠“最近有没有消息”判断这个页面是否还活着
+		// （并顺带刷新本页面那份状态）。服务重启 / 网络抖动后，页面不需要重新加载
+		// 也能自动重新登记；不跳的话就会被当成幽灵清掉，或被别的对话顶掉状态栏。
+		const heartbeat = setInterval(() => {
+			try {
+				ctx.send({ action: "hello" });
+			} catch {
+				/* ignore */
+			}
+		}, 45_000);
+
 		ctx.send({ action: "refresh" });
 
 		return () => {
 			off?.();
 			clearInterval(timer);
+			clearInterval(heartbeat);
 			barObserver?.disconnect();
 			removeBar();
+			if (hiddenSlot?.isConnected) hiddenSlot.style.display = "";
 			if (hiddenNative?.isConnected) hiddenNative.style.display = "";
 			doc.getElementById(STYLE_ID)?.remove();
 		};

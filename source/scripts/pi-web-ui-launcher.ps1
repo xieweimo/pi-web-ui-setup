@@ -80,28 +80,44 @@ $quickPhraseQueueCleanup = Join-Path $cwd 'patches\patch-pi-web-ui-quick-phrase-
 $topbarMenuButtonsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-topbar-menu-buttons.js'
 $pluginTopbarCachePatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-topbar-cache.js'
 $planBoardClearPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-board-clear.js'
-$planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
+$planBoardManager = Join-Path $cwd 'scripts\manage-plan-board.mjs'
+# 入口 bundle 是就地打补丁的（文件名不变），必须让 SW 对入口强制回源重校验，
+# 否则浏览器会一直跑补丁前的老前端（"说改好了，用起来还是老样子"）。
+$swEntryRevalidatePatch = Join-Path $cwd 'patches\patch-pi-web-ui-sw-entry-revalidate.js'
+# 插件快照按客户端取对话（多标签/并行对话/子代理不再串页）。
+$perClientConversationPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-per-client-conversation.js'
+# 所有动手改 bundle 的补丁跑完后再执行：把 index.html 的一次性缓存自愈标记
+# 对到当前 bundle 内容 hash（内容没变就不动，变了则浏览器下次打开自动换新代码）。
+$entryCacheBust = Join-Path $cwd 'scripts\pi-web-ui-entry-cache-bust.js'
 $danglingToolCallsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-dangling-tool-calls.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
-$stopButtonPatch = Join-Path $cwd 'patches\apply-stop-button.ps1'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
+}
+# 看板不是普通装饰补丁：必须补齐、校验并跑行为测试。失败时拒绝启动，避免
+# 「标题里写了 =done、右侧仍是待执行」这类静默脏状态。
+if ((Test-Path $planBoardManager) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    & node $planBoardManager | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show('任务看板自检失败，已拒绝启动。请运行 node scripts\manage-plan-board.mjs 查看诊断。', 'pi-web-ui')
+        exit $LASTEXITCODE
+    }
 }
 if ((Test-Path $quickPhraseQueueCleanup) -and (Get-Command node -ErrorAction SilentlyContinue)) {
     & node $quickPhraseQueueCleanup --remove | Out-Null
+}
+# 必须排在所有 bundle 补丁之后：把缓存自愈标记对齐到最终 bundle 内容。
+if ((Test-Path $entryCacheBust) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    & node $entryCacheBust | Out-Null
 }
 # reconnect 的 watchdog 端口与 descriptor 协议必须和启动器一致；启动时幂等更新插件副本。
 if ((Test-Path $pluginInstaller) -and (Get-Command node -ErrorAction SilentlyContinue)) {
     & node $pluginInstaller --only reconnect | Out-Null
 }
-# 停止按钮样式属于静态网页资源；npm 升级覆盖后启动时幂等恢复。
-if (Test-Path $stopButtonPatch) {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stopButtonPatch | Out-Null
-}
-
 # 独立守护端口：网页断连后仍可请求它重启服务。
 # watchdog 只执行显式 restart descriptor，不猜测 CLI / npm / dev 等启动方式。
 # 当前启动器登记全局/便携 CLI；其他方式可直接给 watchdog 传自己的 descriptor。
@@ -110,6 +126,12 @@ $nodeExe = if (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'node\nod
 } else { (Get-Command node.exe -ErrorAction SilentlyContinue).Source }
 $webEntry = Join-Path (Split-Path $shim) 'node_modules\pi-web-ui\bin\pi-web-ui.mjs'
 $descriptorFile = Join-Path $env:TEMP 'pi-web-ui-restart-descriptor.json'
+# 服务端日志：watchdog 的 descriptor 支持 stdoutFile/stderrFile；不填则服务完全没有日志，
+# 一旦出现「大模型连接失败 / 自动重试」就只能靠猜（2026-09-26 排查教训）。
+$logDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'work\pi-web-ui-prod'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$serviceStdout = Join-Path $logDir 'service.out.log'
+$serviceStderr = Join-Path $logDir 'service.err.log'
 $env:PI_WEB_UI_WATCHDOG_PORT = [string]$watchdogPort
 if ($nodeExe -and (Test-Path $webEntry)) {
     @{
@@ -123,6 +145,8 @@ if ($nodeExe -and (Test-Path $webEntry)) {
         healthUrl = "http://127.0.0.1:$port/"
         watchdogPort = $watchdogPort
         startupTimeoutMs = 60000
+        stdoutFile = $serviceStdout
+        stderrFile = $serviceStderr
         env = @{}
         stop = @{ mode = 'process-tree'; portFallback = $true; allowUnowned = $false }
     } | ConvertTo-Json -Depth 5 | Set-Content -Path $descriptorFile -Encoding UTF8

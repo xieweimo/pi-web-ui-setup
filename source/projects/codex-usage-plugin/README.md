@@ -173,10 +173,38 @@ anthropic=subscription,openrouter=prepaid,my-relay=unknown
 
 ```bash
 node projects/codex-usage-plugin/tests/billing-profile.test.mjs
+node projects/codex-usage-plugin/tests/session-ledger.test.mjs
+node projects/codex-usage-plugin/tests/session-file-identity.test.mjs
+node projects/codex-usage-plugin/tests/per-client-state.test.mjs
+node projects/codex-usage-plugin/tests/stale-client-ttl.test.mjs
+node projects/codex-usage-plugin/tests/plan-decoupling.test.mjs
+node projects/codex-usage-plugin/tests/state-alignment.test.mjs
 node projects/codex-usage-plugin/tests/manual-test.mjs
 node scripts/install-plugins.js --only codex-usage
 node scripts/check-codex-usage.js --reload
 ```
 
 手工测试覆盖：Codex 订阅、多 provider API 按量、非 Codex 订阅、预付积分中转和未知 provider。
-识别引擎单元测试注入认证与 endpoint 元数据，覆盖全部官方 endpoint、订阅特征、中转反证和规则优先级，不依赖本机真实配置。
+识别引擎单元测试注入认证与 endpoint 元数据，覆盖全部官方 endpoint、订阅特征、中转反证和规则优先级，不依赖本机真实配置。会话账本回归测试覆盖活动分支排除、辅助调用、缺失成本与模型级计费规则冲突；会话文件身份测试复现重开后的短内存 id（`c1`/`c4`）复用，断言始终以 `sessionFile` 读取完整 JSONL 账本、缓存不会串会话，同样不依赖真实会话或网络。按页面隔离测试用两个页面指向不同对话，断言各自拿到自己的状态；幽灵页面测试验证心跳过期后死页面不再占据状态栏；解耦测试验证看板/规划条目不会改动成本账本。
+
+## 按页面隔离（多标签 / 并行对话 / 子代理）
+
+宿主的插件快照只给「全客户端最近活跃对话」（`readConversationForPlugins()`），而状态栏是全局单例。
+只要有第二个标签页、并行对话或子代理在跑，某个页面就会挂上别的对话的模型与额度
+（典型现象：模型选了 DeepSeek，底部却显示 `openai-codex` 的额度窗口）。
+
+本插件配合宿主补丁 `patches/patch-pi-web-ui-plugin-per-client-conversation.js` 修正：
+
+- 服务端在每个页面接入（`onAttach` / `onMessage` 的 `from`）时记住 `clientId`，刷新时用
+  `host.getActiveConversation(clientId)` 取**该页面打开的对话**，各算一份并用
+  `host.sendTo(clientId, { state, perClient: true })` 定向下发；汇率与 Codex 额度这类
+  账号级数据每轮只查一次；
+- 客户端只在「本页面那份」与「宿主槽位那份」**不一致**时才接管底部状态栏
+  （自己注入 + 藏掉宿主那一项），一致时继续用官方槽位；
+- 客户端每 45s 发一次心跳，服务端超过 180s 没听到的页面按幽灵清掉（宿主没有 detach 回调），
+  避免掉线的临时页面一直占着官方槽位那一份状态；
+- **对齐防线**：宿主重启后每个浏览器的活动对话会被重置成「本项目最近一条会话」，不一定是
+  你眼前那个（典型表现：重启后额度变 0）。客户端因此拿页面原生「消息 N」校验每份状态是否
+  属于本页面：对不上就不采用，保留上一次对齐值、显示 `⚡ 同步中…` 并自动请求重算；
+- 面板上用 `data-cu-*` 暴露快照会话、消息数、provider 与对齐标记，供
+  `scripts/check-codex-usage.js` 断言「插件快照会话 == 本页面会话」且「状态已对齐」。

@@ -162,6 +162,12 @@ async function main() {
 			if (document.getElementById('codex-usage-statusbar')) break;
 			await new Promise(r => setTimeout(r, 200));
 		}
+		// 按页面那份状态（perClient）可能比首屏晚到，再等最多 6s。
+		for (let i = 0; i < 30; i++) {
+			const cu = document.querySelector('.cu');
+			if (cu && cu.dataset.cuPerClient === '1') break;
+			await new Promise(r => setTimeout(r, 200));
+		}
 		const costItem = [...document.querySelectorAll('.statusbar .status-item')].find(n => /累计成本|Cumulative cost/i.test(n.getAttribute('title') || ''));
 		window.__piWebUiHost?.setView?.('plugin:codex-usage');
 		// 等插件视图渲染出内容即可，不再固定等 1.2s。
@@ -208,6 +214,18 @@ async function main() {
 				costTitle: n.getAttribute('title') || null
 			})),
 			meta: document.querySelector('.cu-meta')?.innerText ?? null,
+			// 插件面板上的数据钩子：插件拿到的是“哪个对话”的快照。
+			cuDataset: (() => {
+				const el = document.querySelector('.cu');
+				return el ? { ...el.dataset } : null;
+			})(),
+			// 当前页面自己的会话消息数（原生项），用来核对插件快照是不是同一个对话。
+			nativeMessages: (() => {
+				const n = [...document.querySelectorAll('.statusbar .status-item')]
+					.find(x => /会话消息数/.test(x.getAttribute('title') || ''));
+				const m = n ? (n.textContent || '').match(/(\\d+)/) : null;
+				return m ? Number(m[1]) : null;
+			})(),
 			barHtml: (document.querySelector('.statusbar')?.innerHTML ?? '').slice(0, 2200)
 		});
 	})()`;
@@ -248,7 +266,29 @@ async function main() {
 		const pluginText = data.pluginTab.join(" ");
 		const activePluginsOk = ["额度", "同步", "重连"].every((name) => pluginText.includes(name));
 		const quickAskRetired = !/临时问问|Quick Ask/i.test(pluginText);
-		passed = Boolean(data.statusBarSummary || data.slotBar) && activePluginsOk && quickAskRetired && topbarOk && barPinned;
+		// 按页面隔离（2026-09-25）：模型选了 A 却显示 B 的额度，就是因为过去只拿
+		// “全客户端最近活跃对话”。这里断言插件快照 == 本页面会话（消息数一致）。
+		const cu = data.cuDataset ?? null;
+		const perClientOk = cu?.cuPerClient === "1";
+		// 对齐标记：客户端拿页面原生「消息 N」校验过这份状态是不是本页面的（重启后宿主会把
+		// 活动对话重置成“本项目最近一条会话”，对不上时必须不采用，否则就把别的对话的 0 显示出来了）。
+		const aligned = cu?.cuAligned === "1";
+		const snapshotMessages = cu ? Number(cu.cuMessages) : null;
+		const nativeMessages = data.nativeMessages;
+		const sameConversation =
+			perClientOk &&
+			nativeMessages !== null &&
+			Number.isFinite(snapshotMessages) &&
+			snapshotMessages === nativeMessages;
+		console.log("按页面隔离：", perClientOk ? "已收到本页面状态 ✓" : "✗ 未收到定向状态（宿主补丁未生效？）");
+		console.log("状态与本页面会话对齐：", aligned ? "是 ✓" : "✗ 否（显示的是别的对话/空会话；看面面板提示）");
+		console.log(
+			"快照会话与本页面一致：",
+			sameConversation
+				? "是 ✓"
+				: `✗ 否（插件快照 ${snapshotMessages} 条 vs 本页面 ${nativeMessages} 条 · ${cu?.cuProvider ?? "?"}）`,
+		);
+		passed = Boolean(data.statusBarSummary || data.slotBar) && activePluginsOk && quickAskRetired && topbarOk && barPinned && sameConversation && aligned;
 		console.log("三个现役插件入口正常：", activePluginsOk);
 		console.log("临时问问已退役：", quickAskRetired);
 		console.log("原生菜单项已提升到顶栏：", topbarOk);

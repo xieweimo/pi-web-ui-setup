@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "recordedOn": "2026-09-24",
+  "target": {
+    "piVersion": "0.87.1",
+    "piWebUiVersion": "0.95.0",
+    "service": "http://127.0.0.1:8787"
+  },
+  "topbar": {
+    "command": "node scripts/measure-topbar-render.js --runs 3 --budget 400 --json",
+    "budgetMs": 400,
+    "cold": {
+      "firstPaintMs": 162,
+      "pluginEntryMs": 982
+    },
+    "warmRuns": [
+      { "firstPaintMs": 156, "pluginEntryMs": 156 },
+      { "firstPaintMs": 290, "pluginEntryMs": 290 }
+    ],
+    "warmWorstPluginEntryMs": 290,
+    "passed": true
+  },
+  "planBoard": {
+    "command": "node work/probe-plan-board-latency.js --port 8787 --burst",
+    "renderReadyMs": 2763,
+    "injectToVisibleMs": 1368,
+    "clearToGoneMs": 17,
+    "clearToEmptySnapshotMs": 5,
+    "collapseToggleMs": 1,
+    "idleFrameMs": [14, 18],
+    "burst": {
+      "updates": 40,
+      "sendToDomMs": 2739,
+      "frameP50Ms": 17,
+      "frameP95Ms": 17,
+      "frameMaxMs": 33,
+      "framesOver200Ms": 0
+    }
+  },
+  "codexUsage": {
+    "command": "node scripts/check-codex-usage.js --port 8787 --out docs/pi-web-ui-迁移基线-codex-usage.png",
+    "renderReadyMs": 2716,
+    "passed": true,
+    "currentClientStateReceived": true,
+    "currentClientConversationAligned": true,
+    "currentClientMessageCountMatches": true,
+    "nativeCostHidden": true,
+    "bottombar": {
+      "visible": true,
+      "flexShrink": "0",
+      "whiteSpace": "nowrap"
+    },
+    "screenshot": "docs/pi-web-ui-迁移基线-codex-usage.png"
+  },
+  "unitTests": {
+    "command": "node <each projects/codex-usage-plugin/tests/*.test.mjs>",
+    "passed": [
+      "billing-profile.test.mjs",
+      "per-client-state.test.mjs",
+      "plan-decoupling.test.mjs",
+      "session-ledger.test.mjs",
+      "stale-client-ttl.test.mjs",
+      "state-alignment.test.mjs"
+    ]
+  },
+  "comparisonRules": {
+    "warmTopbarWorstMs": 319,
+    "planClearToGoneMs": 19,
+    "planFrameP95Ms": 19,
+    "framesOver200Ms": 0,
+    "notes": "迁移后 P95 不得高于本基线 10%；功能切换前必须补齐多标签页、微信双用户、断线重连和窄屏 E2E。"
+  }
+}

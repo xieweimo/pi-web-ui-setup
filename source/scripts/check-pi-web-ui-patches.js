@@ -36,6 +36,16 @@ const QUIET = process.argv.includes("--quiet");
 const MARKERS = {
 	"patch-pi-web-ui-usage-cost.js": { file: "server", marker: "usageCost: typeof m.usage?.cost?.total" },
 	"patch-pi-web-ui-plugin-live-model.js": { file: "server", marker: "plugin-live-model-patch" },
+	// 插件快照按客户端（clientId）取对话：否则多标签/并行对话/子代理下
+	// 插件会串页（模型选了 DeepSeek 却显示 Codex 额度）。
+	"patch-pi-web-ui-plugin-per-client-conversation.js": {
+		file: "server",
+		marker: [
+			"plugin-per-client-conversation-patch",
+			"this.conversationProvider?.(clientId)",
+			"service.readConversationForPlugins?.(clientId)",
+		],
+	},
 	"patch-pi-web-ui-hide-forked-sessions.js": { file: "server", marker: "hide-forked-sessions" },
 	"patch-pi-web-ui-permanent-project-ignore.js": { file: "server", marker: "managed-recent-project-actions-v3" },
 	"patch-pi-web-ui-recovery-ui.js": { file: "html", marker: "pi-recovery-ui-v2" },
@@ -43,9 +53,11 @@ const MARKERS = {
 	"patch-pi-web-ui-topbar-menu-buttons.js": { file: "web", marker: "topbar-menu-buttons-patch" },
 	"patch-pi-web-ui-plugin-topbar-cache.js": { file: "web", marker: "plugin-topbar-cache-patch-v2" },
 	"patch-pi-web-ui-plan-board-clear.js": { file: "web", marker: "plan-board-clear-no-confirm-v1" },
-	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: ["plan-inline-marker-v2", "plan-marker-snapshot-v2", "plan-marker-restore-v2"] },
+	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: ["plan-inline-marker-v4", "plan-marker-snapshot-v2", "plan-marker-restore-v2", "plan-marker-strict-syntax-v3", "plan-marker-legacy-status-migration-v4"] },
+	// 入口 bundle 是就地打补丁的（文件名不变），必须让 SW 对入口强制回源重校验，
+	// 否则浏览器会长期跑补丁前的老代码（见 docs/pi-web-ui-前端补丁缓存失效机制.md）。
+	"patch-pi-web-ui-sw-entry-revalidate.js": { file: "sw", marker: "piwork-sw-entry-revalidate-v1" },
 	"patch-pi-web-ui-dangling-tool-calls.js": { file: "server", marker: "dangling-active-chain-filter-v2" },
-	"apply-stop-button.ps1": { file: "html", marker: "stopPulse" },
 };
 
 /**
@@ -58,6 +70,7 @@ const RETIRED = {
 	"patch-pi-web-ui-usage-cost.js": "0.94.1 起上游 serialize 自己下发 usageCost（缺省 undefined，与本补丁的 null 对插件等价）",
 	"patch-pi-web-ui-hide-forked-sessions.js": "0.94.1 起上游 agent-service 自己按 parentSessionPath 去重 fork 链尾",
 	"patch-pi-web-ui-permanent-project-ignore.js": "0.94.1 起上游 client-state 自己维护全局 removedProjects 与打开即清标记",
+	"apply-stop-button.ps1": "0.95.0 起上游 `.inputbox .btn.stop` 自带 `--stop-red` 与 `stop-pulse`；旧脚本只保留给历史版本 profile，当前版本不得执行",
 };
 
 const results = [];
@@ -90,6 +103,7 @@ function webFile(kind) {
 	const webRoot = findWebUiRoot();
 	if (!webRoot) return null;
 	if (kind === "html") return path.join(webRoot, "web", "dist", "index.html");
+	if (kind === "sw") return path.join(webRoot, "web", "dist", "sw.js");
 	if (kind === "server") {
 		const dir = path.join(webRoot, "dist", "server");
 		if (!fs.existsSync(dir)) return null;
@@ -156,7 +170,7 @@ for (const spec of Object.values(MARKERS)) {
 }
 for (const [kind, markers] of markersByKind) {
 	if (kind === "html") continue; // index.html 不是 JS，无需语法检查
-	for (const p of webFile(kind) ?? []) {
+	for (const p of [webFile(kind)].flat().filter(Boolean)) {
 		if (!fs.existsSync(p)) continue;
 		const text = fs.readFileSync(p, "utf8");
 		if (!markers.some((m) => text.includes(m))) continue; // 没被补丁动过，不查
@@ -214,7 +228,26 @@ if (/this\.markerSvc = new MarkerService\(\{[\s\S]*?planManager: this\.planManag
 	fail("plan marker host", "AgentService 未向 MarkerService 注入 planManager");
 }
 
-// ---- 4. 汇总 ----
+// ---- 4. 入口 bundle 缓存自愈：key 必须与当前 bundle 内容 hash 一致 ----
+// 这是「补丁已落地、浏览器却还在跑老代码」的防线：index.html 里的自愈挡块一旦
+// 与 bundle 内容脱节，浏览器就会永远拿旧版（2026-09-25 实际踩过：看板补丁 04:35
+// 落地，index.html 的 key 还停在 22:55 的旧 hash，用户第二天仍在弹旧版确认框）。
+try {
+	const { refreshEntryCacheBust } = require(path.join(ROOT, "scripts", "pi-web-ui-entry-cache-bust.js"));
+	const before = refreshEntryCacheBust(true);
+	if (!before.changed) {
+		pass("entry cache bust", `已对齐到 bundle hash ${before.hash}`);
+	} else {
+		refreshEntryCacheBust(false);
+		const after = refreshEntryCacheBust(true);
+		if (after.changed) fail("entry cache bust", "重新对齐后仍与 bundle 内容不一致");
+		else pass("entry cache bust", `已重新对齐到 bundle hash ${after.hash}`);
+	}
+} catch (error) {
+	fail("entry cache bust", error.message);
+}
+
+// ---- 5. 汇总 ----
 const failed = results.filter((r) => !r.ok);
 if (!QUIET) {
 	for (const r of results) console.log(`${r.ok ? "✓" : "✗"} ${r.name} — ${r.detail}`);

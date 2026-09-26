@@ -1,0 +1,314 @@
+{
+  "format": 1,
+  "capturedAt": "2026-09-26T00:55:50.448Z",
+  "versions": {
+    "pi": "0.87.1",
+    "piWebUi": "0.95.0"
+  },
+  "profile": {
+    "path": "configs/pi-web-ui-profiles/pi-0.87.1_web-0.95.0.json",
+    "activePatches": [
+      {
+        "path": "patches/patch-pi-web-ui-plugin-live-model.js",
+        "sha256": "651cf2c2444f763d3ba5cb81f96157092eedf5bbd52d6df74b7317bc50280b98"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-plugin-per-client-conversation.js",
+        "sha256": "0a474c2b476b9428d9d4fdace06000c160b0bf3d209a6264cb3105f4bb9ea8ff"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-topbar-menu-buttons.js",
+        "sha256": "fb13c678be19509db0bd51dffb2da57272340ea36a762790391e8cfc96c39582"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-plugin-topbar-cache.js",
+        "sha256": "396f0b3235baadd01d7915db1b094471eff2390e4ad25958d719c8c25c3bd871"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-plan-board-clear.js",
+        "sha256": "b3d121ced69e965d148b8fdde8367b8f31fbe5b1497c34d971108e39d414a8f2"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-plan-marker.js",
+        "sha256": "5ad3d09d51905fec3a5263e34708734db1b28c2450241cfa17aec4a36148c778"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-dangling-tool-calls.js",
+        "sha256": "c84145aea6a591c24d08337d3b2ee0e71c42992c90db41c87e6799adde899d33"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-sw-entry-revalidate.js",
+        "sha256": "b17b0ad7e6e01dc027f76eb4501af733e8a8cd64e1643b25d35bae005a6af01c"
+      },
+      {
+        "path": "patches/patch-pi-web-ui-wechat-ilink.js",
+        "sha256": "0eac407fc184fb126fe9223614b01fe1280e675e3c67f3bf4e0233d9aed6cb32"
+      }
+    ]
+  },
+  "runtimeArtifacts": {
+    "entryBundle": {
+      "exists": true,
+      "sha256": "2ada6647fb679177e0c61a3bf691a846bb28b318af8c3dbf09d7b4371a6ea611",
+      "bytes": 820312
+    },
+    "serviceWorker": {
+      "exists": true,
+      "sha256": "369a66e29cda057f0a644f7119bb0a1b8e9e7700459836d727b1c0d681daf065",
+      "bytes": 7268
+    },
+    "indexHtml": {
+      "exists": true,
+      "sha256": "fbfdbba6378d2375920cce42b60f2ec140daca04c1b85d09f03c05afc182d407",
+      "bytes": 2262
+    }
+  },
+  "plugins": {
+    "codex-usage": {
+      "source": "projects/codex-usage-plugin",
+      "installed": "<dataDir>/plugins/codex-usage",
+      "entries": {
+        "manifest.json": {
+          "source": {
+            "exists": true,
+            "sha256": "2d7e73c8dc358d35b5ba03a3465c18c988087debe7118fa1a2d652fe77f00248",
+            "bytes": 3640
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "2d7e73c8dc358d35b5ba03a3465c18c988087debe7118fa1a2d652fe77f00248",
+            "bytes": 3640
+          },
+          "matches": true
+        },
+        "index.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "0c80ad7da9cfccdba4e5db1357d1b9d5678ebcdc4c2e0f9095dfe58f7560dff7",
+            "bytes": 46354
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "0c80ad7da9cfccdba4e5db1357d1b9d5678ebcdc4c2e0f9095dfe58f7560dff7",
+            "bytes": 46354
+          },
+          "matches": true
+        },
+        "client/entry.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "05a1a50eaa7ddbf278eb461fc7fc53fa5c18b7fc3c8339e22cc0abfbe03c844c",
+            "bytes": 27641
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "05a1a50eaa7ddbf278eb461fc7fc53fa5c18b7fc3c8339e22cc0abfbe03c844c",
+            "bytes": 27641
+          },
+          "matches": true
+        }
+      }
+    },
+    "piwork-tools": {
+      "source": "projects/piwork-tools-plugin",
+      "installed": "<dataDir>/plugins/piwork-tools",
+      "entries": {
+        "manifest.json": {
+          "source": {
+            "exists": true,
+            "sha256": "89ae9f9848bc850c77a3ef2408fcc280aa8f4c2b71764b5ee44e9663516f4cec",
+            "bytes": 873
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "89ae9f9848bc850c77a3ef2408fcc280aa8f4c2b71764b5ee44e9663516f4cec",
+            "bytes": 873
+          },
+          "matches": true
+        },
+        "index.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "2df95c7a3b16f535690edb36e999d0d0766f151e5eb2ef02decbcf78ba4660c4",
+            "bytes": 8693
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "2df95c7a3b16f535690edb36e999d0d0766f151e5eb2ef02decbcf78ba4660c4",
+            "bytes": 8693
+          },
+          "matches": true
+        },
+        "client/entry.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "ce15ead6b003d50786fdfc436f43dd12a1558a95bff44d55c85b6e606a3eb6b7",
+            "bytes": 10463
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "ce15ead6b003d50786fdfc436f43dd12a1558a95bff44d55c85b6e606a3eb6b7",
+            "bytes": 10463
+          },
+          "matches": true
+        }
+      }
+    },
+    "piwork-ui-layout": {
+      "source": "projects/piwork-ui-layout-plugin",
+      "installed": "<dataDir>/plugins/piwork-ui-layout",
+      "entries": {
+        "manifest.json": {
+          "source": {
+            "exists": true,
+            "sha256": "25f0620368bb547bf7a452f4f0a63402d1b3500d61d0c7f536cb44ca30140cbe",
+            "bytes": 921
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "25f0620368bb547bf7a452f4f0a63402d1b3500d61d0c7f536cb44ca30140cbe",
+            "bytes": 921
+          },
+          "matches": true
+        },
+        "index.mjs": {
+          "source": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "installed": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "matches": true
+        },
+        "client/entry.mjs": {
+          "source": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "installed": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "matches": true
+        }
+      }
+    },
+    "reconnect": {
+      "source": "projects/reconnect-plugin",
+      "installed": "<dataDir>/plugins/reconnect",
+      "entries": {
+        "manifest.json": {
+          "source": {
+            "exists": true,
+            "sha256": "670dabe9f52e40ae2523d4fd431d2d4e2c9ae9e537a68ebeeaed8271b8b99481",
+            "bytes": 643
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "670dabe9f52e40ae2523d4fd431d2d4e2c9ae9e537a68ebeeaed8271b8b99481",
+            "bytes": 643
+          },
+          "matches": true
+        },
+        "index.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "6ddff512e3f564303bd196ca76345ee632f49a5ad4bd36a3aa497244ac3239f1",
+            "bytes": 3251
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "6ddff512e3f564303bd196ca76345ee632f49a5ad4bd36a3aa497244ac3239f1",
+            "bytes": 3251
+          },
+          "matches": true
+        },
+        "client/entry.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "95aba433c8c5fda88ff00003fe0717caaf736b1672494f65dc46afde40e1e2a6",
+            "bytes": 21062
+          },
+          "installed": {
+            "exists": true,
+            "sha256": "95aba433c8c5fda88ff00003fe0717caaf736b1672494f65dc46afde40e1e2a6",
+            "bytes": 21062
+          },
+          "matches": true
+        }
+      }
+    },
+    "wechat-ilink": {
+      "source": "projects/wechat-ilink-plugin",
+      "installed": "<dataDir>/plugins/wechat-ilink",
+      "entries": {
+        "manifest.json": {
+          "source": {
+            "exists": true,
+            "sha256": "4974ae71477424fe448aa8104bf579bff4e91571da01242cadf4eaace1e61cd7",
+            "bytes": 3085
+          },
+          "installed": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "matches": false
+        },
+        "index.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "a3b952a2971c1266dbe1fb3cc2a47c08c3241369a6317f9b8d247ff5f556641e",
+            "bytes": 27101
+          },
+          "installed": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "matches": false
+        },
+        "client/entry.mjs": {
+          "source": {
+            "exists": true,
+            "sha256": "8bff36f28e5afdf82c13cc9f19cb775adefe8effbb40b8184ce3c18797740935",
+            "bytes": 7933
+          },
+          "installed": {
+            "exists": false,
+            "sha256": null,
+            "bytes": 0
+          },
+          "matches": false
+        }
+      }
+    }
+  },
+  "browserExtension": {
+    "id": "page-picker",
+    "manifest": {
+      "exists": true,
+      "sha256": "83ea38bbf6de1a60b37c69347699a0acdac2ee23b5dbf2cd579bf69940c8a208",
+      "bytes": 728
+    },
+    "backgroundBundle": {
+      "exists": true,
+      "sha256": "17c0970edc6a2ee26db4d223550729534136445d249168bc346d4984100a6799",
+      "bytes": 83039
+    }
+  },
+  "upstreamClone": {
+    "semanticDiff": [
+      "web/src/App.tsx",
+      "web/src/main.tsx",
+      "web/src/styles.css",
+      "web/src/use-chat.ts"
+    ]
+  }
+}
