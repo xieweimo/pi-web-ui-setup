@@ -114,9 +114,9 @@ if ((Test-Path $quickPhraseQueueCleanup) -and (Get-Command node -ErrorAction Sil
 if ((Test-Path $entryCacheBust) -and (Get-Command node -ErrorAction SilentlyContinue)) {
     & node $entryCacheBust | Out-Null
 }
-# reconnect 的 watchdog 端口与 descriptor 协议必须和启动器一致；启动时幂等更新插件副本。
+# 所有受管插件（含 wechat-ilink fork）的运行副本必须与仓库同步；安装器保留用户的 config.json。
 if ((Test-Path $pluginInstaller) -and (Get-Command node -ErrorAction SilentlyContinue)) {
-    & node $pluginInstaller --only reconnect | Out-Null
+    & node $pluginInstaller | Out-Null
 }
 # 独立守护端口：网页断连后仍可请求它重启服务。
 # watchdog 只执行显式 restart descriptor，不猜测 CLI / npm / dev 等启动方式。

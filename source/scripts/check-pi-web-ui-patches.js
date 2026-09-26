@@ -29,7 +29,7 @@ const QUIET = process.argv.includes("--quiet");
 
 /**
  * 每个补丁落地后的「特征字符串」断言表。
- * file: server = dist/server 下的服务端产物；web = web/dist/assets 下的前端 bundle；html = web/dist/index.html
+ * file: server = dist/server 下的服务端产物；web = web/dist/assets 下的前端 bundle；html = web/dist/index.html；wechat-ilink = 已安装的微信插件入口
  * marker 可以是字符串或字符串数组：数组内每一项都必须命中才算已落地。
  * 新增补丁时必须同时补进这张表，否则校验会漏项（漏项按失败处理）。
  */
@@ -58,6 +58,8 @@ const MARKERS = {
 	// 否则浏览器会长期跑补丁前的老代码（见 docs/pi-web-ui-前端补丁缓存失效机制.md）。
 	"patch-pi-web-ui-sw-entry-revalidate.js": { file: "sw", marker: "piwork-sw-entry-revalidate-v1" },
 	"patch-pi-web-ui-dangling-tool-calls.js": { file: "server", marker: "dangling-active-chain-filter-v2" },
+	// 微信通道插件不在 pi-web-ui 的 npm 包目录中，需单独检查其已安装入口。
+	"patch-pi-web-ui-wechat-ilink.js": { file: "wechat-ilink", marker: "wechat-ilink-safe-reply-v1" },
 };
 
 /**
@@ -104,6 +106,11 @@ function webFile(kind) {
 	if (!webRoot) return null;
 	if (kind === "html") return path.join(webRoot, "web", "dist", "index.html");
 	if (kind === "sw") return path.join(webRoot, "web", "dist", "sw.js");
+	if (kind === "wechat-ilink") {
+		const bundled = path.join(path.dirname(webRoot), ".pi-web", "plugins", "wechat-ilink", "index.mjs");
+		const fallback = path.join(process.env.USERPROFILE || process.env.HOME || "", ".pi-web", "plugins", "wechat-ilink", "index.mjs");
+		return fs.existsSync(bundled) ? bundled : fallback;
+	}
 	if (kind === "server") {
 		const dir = path.join(webRoot, "dist", "server");
 		if (!fs.existsSync(dir)) return null;
