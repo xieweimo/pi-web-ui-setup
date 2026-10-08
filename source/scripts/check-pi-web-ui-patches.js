@@ -53,11 +53,45 @@ const MARKERS = {
 	"patch-pi-web-ui-topbar-menu-buttons.js": { file: "web", marker: "topbar-menu-buttons-patch" },
 	"patch-pi-web-ui-plugin-topbar-cache.js": { file: "web", marker: "plugin-topbar-cache-patch-v2" },
 	"patch-pi-web-ui-plan-board-clear.js": { file: "web", marker: "plan-board-clear-no-confirm-v1" },
-	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: ["plan-inline-marker-v4", "plan-marker-snapshot-v2", "plan-marker-restore-v2", "plan-marker-strict-syntax-v3", "plan-marker-legacy-status-migration-v4"] },
+	// plan-marker：restore-v2 / legacy-status-migration-v4 两个标记自 0.99.0 起**退役** ——
+	// 上游自己持久化计划（PlanManager 落盘 plans.json、按 sessionId）并在快照里直出 plan，
+	// 我们那两处注入已删（见 patches/patch-pi-web-ui-plan-marker.js 注释与升级适配记录）。
+	// 保留在本表里会让校验永远期待不该存在的 marker。
+	"patch-pi-web-ui-plan-marker.js": { file: "server", marker: ["plan-inline-marker-v4", "plan-marker-snapshot-v2", "plan-marker-strict-syntax-v3"] },
 	// 入口 bundle 是就地打补丁的（文件名不变），必须让 SW 对入口强制回源重校验，
-	// 否则浏览器会长期跑补丁前的老代码（见 docs/pi-web-ui-前端补丁缓存失效机制.md）。
+	// 否则浏览器会长期跑补丁前的老代码（见 docs/升级适配/pi-web-ui-前端补丁缓存失效机制.md）。
 	"patch-pi-web-ui-sw-entry-revalidate.js": { file: "sw", marker: "piwork-sw-entry-revalidate-v1" },
-	"patch-pi-web-ui-dangling-tool-calls.js": { file: "server", marker: "dangling-active-chain-filter-v2" },
+	// dangling-tool-calls 自 0.96.0 退役（上游 #332 内建 tailAssistantToolCallIds），已移入 RETIRED。
+	// 保留登记会让校验期待那个不该存在的 marker——而重复注入恰恰是服务起不来的原因。
+	// pi 内核补丁（改的是 node_modules 里 pi 自己的产物，不是 pi-web-ui 产物）：
+	// 根治被污染的 toolCall.name 导致 openai-codex 固定 400（Invalid 'input[N].name'）。
+	// 三个标记分别落在 pi-agent-core 的注入点、pi-ai 的注入点与两个注入函数上。
+	"patch-pi-invalid-toolcall-names.js": {
+		file: "pi-core",
+		marker: ["pi-invalid-toolcall-name-v1", "function sanitizeInvalidToolCallNames", "function sanitizeResponsesFunctionName"],
+	},
+	// 目标审查机制修复：空 feedback 兜底 + 审查输入加入工具/命令证据 + 内置判定粒度。
+	// 起因：远程部署类目标连烧 24 轮全 fail（审查者看不到远程证据、未声称的后续阶段
+	// 也被算 fail 理由、空 feedback 让 Agent 空跑）。marker 与关键结构同时断言。
+	"patch-pi-web-ui-goal-review.js": {
+		file: "server",
+		marker: [
+			"goal-review-evidence-v1",
+			"export function ensureReviewerFeedback",
+			"collectEvidenceDigest(session, cwd",
+			"# Scoring rules (mandatory",
+			"【判定规则（强制，覆盖此前任何措辞）】",
+			// 只看提示词不够：0.99.0 的证据必须真的取自执行者会话、兜底真的在 verdict 落地处被调用。
+			"const execSession = this.host.getConv?.(execId)?.session;",
+			"verdict.feedback = ensureReviewerFeedback(verdict.feedback, feedback);",
+			// 一行 stderr 日志：把「证据段到底空不空」变成可观测事实（审查指令不经 WS 帧下发）。
+			"[goal-evidence] digest=",
+		],
+	},
+	// 模型可见性：服务端只下发免费/订阅/白名单模型，并给每项带 free 字段。
+	"patch-pi-web-ui-free-models-only.js": { file: "server", marker: "free-models-only-v2" },
+	// 免费模型绿色「免费」徽标：就地改前端入口 bundle（改完需刷入口缓存，见 entry cache bust）。
+	"patch-pi-web-ui-free-model-badge.js": { file: "web", marker: "free-model-badge-v1" },
 	// 微信通道插件不在 pi-web-ui 的 npm 包目录中，需单独检查其已安装入口。
 	"patch-pi-web-ui-wechat-ilink.js": { file: "wechat-ilink", marker: "wechat-ilink-safe-reply-v1" },
 };
@@ -73,6 +107,7 @@ const RETIRED = {
 	"patch-pi-web-ui-hide-forked-sessions.js": "0.94.1 起上游 agent-service 自己按 parentSessionPath 去重 fork 链尾",
 	"patch-pi-web-ui-permanent-project-ignore.js": "0.94.1 起上游 client-state 自己维护全局 removedProjects 与打开即清标记",
 	"apply-stop-button.ps1": "0.95.0 起上游 `.inputbox .btn.stop` 自带 `--stop-red` 与 `stop-pulse`；旧脚本只保留给历史版本 profile，当前版本不得执行",
+	"patch-pi-web-ui-dangling-tool-calls.js": "0.96.0 起上游 dangling-tools 自带 `export function tailAssistantToolCallIds`（#332，守卫比本补丁更严：除 error/aborted 外遇到 user 消息也停止回溯）；再注入会造成同名函数重复声明、服务端 bundle SyntaxError（2026-09-29 真实故障）。脚本保留仅用于清除历史注入的残留块",
 };
 
 const results = [];
@@ -123,6 +158,19 @@ function webFile(kind) {
 			}
 		};
 		walk(dir);
+		return files;
+	}
+	if (kind === "pi-core") {
+		// pi 自己的产物：agent-loop.js（写账本前净化）+ openai-responses-shared.js（发请求前兜底），
+		// 每个 pi 安装副本各一份（详见 scripts/pi-core-locate.js 头注释）。
+		const { piCodingAgentRoots, resolvePiDep } = require("./pi-core-locate.js");
+		const files = [];
+		for (const root of piCodingAgentRoots()) {
+			const core = resolvePiDep(root, "pi-agent-core");
+			const ai = resolvePiDep(root, "pi-ai");
+			if (core) files.push(path.join(core, "dist", "agent-loop.js"));
+			if (ai) files.push(path.join(ai, "dist", "api", "openai-responses-shared.js"));
+		}
 		return files;
 	}
 	const dir = path.join(webRoot, "web", "dist", "assets");
@@ -235,6 +283,41 @@ if (/this\.markerSvc = new MarkerService\(\{[\s\S]*?planManager: this\.planManag
 	fail("plan marker host", "AgentService 未向 MarkerService 注入 planManager");
 }
 
+// ---- 3.5 dev 源码补丁（vite 5173 直接 serve source checkout，不读 web/dist）----
+// 少了这道断言就会出现「上面全是绿的、5173 上确认框却还在」：补丁只打 npm bundle，
+// dev 页面用的是另一份源码。2026-09-29 实际踩过，用户以为“修过一遍又回去了”。
+{
+	const devSrc = path.join(ROOT, "projects", "pi-web-ui-source", "web", "src", "components", "PlanBoard.tsx");
+	if (!fs.existsSync(devSrc)) {
+		pass("dev source plan-board-clear", "无 source checkout，跳过");
+	} else {
+		const text = fs.readFileSync(devSrc, "utf8");
+		const hasMarker = text.includes("plan-board-clear-no-confirm-v1");
+		const hasConfirm = /window\.confirm\("确定要清空当前任务计划看板吗？"\)/.test(text);
+		if (hasMarker && !hasConfirm) pass("dev source plan-board-clear", "PlanBoard.tsx 已去 confirm");
+		else if (hasConfirm) fail("dev source plan-board-clear", "源码仍含 window.confirm —— 5173 页面清空会卡");
+		else fail("dev source plan-board-clear", "缺 marker，无法确认补丁状态（可能被上游还原）");
+	}
+}
+
+// ---- 3.6 dev 源码：顶栏原生菜单项（同样是“只打 bundle 就漏了 dev”的重灾区）----
+{
+	const devSlots = path.join(ROOT, "projects", "pi-web-ui-source", "web", "src", "ui-slots.ts");
+	if (!fs.existsSync(devSlots)) {
+		pass("dev source topbar-menu-buttons", "无 source checkout，跳过");
+	} else {
+		const text = fs.readFileSync(devSlots, "utf8");
+		const set = text.match(/REQUIRED_TOPBAR_ITEM_IDS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/);
+		const six = ["host:browser", "host:sound", "host:language", "host:theme", "host:update", "host:github"];
+		const inSet = set ? six.every((id) => set[1].includes(`"${id}"`)) : false;
+		const hasMarker = text.includes("topbar-menu-buttons-patch");
+		if (inSet && hasMarker) pass("dev source topbar-menu-buttons", "六项已进顶栏常驻集合");
+		else if (!set) fail("dev source topbar-menu-buttons", "找不到 REQUIRED_TOPBAR_ITEM_IDS —— 上游改了常量，必须适配");
+		else if (!inSet) fail("dev source topbar-menu-buttons", `常驻集合缺项（六项只命中 ${six.filter((id) => set[1].includes(`"${id}"`)).length} 个）—— 5173 顶栏会少按钮`);
+		else fail("dev source topbar-menu-buttons", "缺 marker，无法确认补丁状态");
+	}
+}
+
 // ---- 4. 入口 bundle 缓存自愈：key 必须与当前 bundle 内容 hash 一致 ----
 // 这是「补丁已落地、浏览器却还在跑老代码」的防线：index.html 里的自愈挡块一旦
 // 与 bundle 内容脱节，浏览器就会永远拿旧版（2026-09-25 实际踩过：看板补丁 04:35
@@ -254,7 +337,27 @@ try {
 	fail("entry cache bust", error.message);
 }
 
-// ---- 5. 汇总 ----
+// ---- 5. pi 内核补丁：逐副本断言 ----
+// 上面的 marker 检查是把某类文件拼成一大段文本再 match，会放过「只补了其中一份副本」的情况；
+// 而 pi 内核在机器上可能存在 pi-web-ui 内嵌、全局 npm、源码项目三份，漏一份就等于那个入口没修。
+try {
+	const { piCodingAgentRoots, resolvePiDep } = require(path.join(ROOT, "scripts", "pi-core-locate.js"));
+	const targets = [];
+	for (const root of piCodingAgentRoots()) {
+		const core = resolvePiDep(root, "pi-agent-core");
+		const ai = resolvePiDep(root, "pi-ai");
+		if (core) targets.push({ root, file: path.join(core, "dist", "agent-loop.js"), needle: "sanitizeInvalidToolCallNames(message)" });
+		if (ai) targets.push({ root, file: path.join(ai, "dist", "api", "openai-responses-shared.js"), needle: "sanitizeResponsesFunctionName(toolCall.name)" });
+	}
+	const missing = targets.filter((t) => !fs.existsSync(t.file) || !fs.readFileSync(t.file, "utf8").includes(t.needle));
+	if (targets.length === 0) fail("pi core patch", "没有发现任何 pi 内核安装副本");
+	else if (missing.length) fail("pi core patch", `未打补丁的副本：${missing.map((t) => `${path.basename(t.file)} @ ${t.root}`).join(" / ")}`);
+	else pass("pi core patch", `${targets.length} 个内核产物全部已打补丁`);
+} catch (error) {
+	fail("pi core patch", error.message);
+}
+
+// ---- 6. 汇总 ----
 const failed = results.filter((r) => !r.ok);
 if (!QUIET) {
 	for (const r of results) console.log(`${r.ok ? "✓" : "✗"} ${r.name} — ${r.detail}`);

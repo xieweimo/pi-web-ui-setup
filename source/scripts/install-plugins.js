@@ -7,6 +7,7 @@
  *
  * 用法：node scripts/install-plugins.js [--data-dir <dir>] [--dry-run] [--only <id,id>]
  * 说明：只复制 manifest.json / index.mjs / client/ / README.md，跳过 tests/；
+ *      configs/disabled-plugins.json 中列出的插件不会部署，并会清理旧运行副本。
  *      目标目录里已有的 config.json（用户的本地配置）不会被覆盖，只在缺失时补一份。
  *      插件目录与 pi-web-ui 包目录分离 —— npm 升级 pi-web-ui 不会动它。
  */
@@ -21,6 +22,7 @@ const onlyFlag = args.indexOf("--only");
 
 const ROOT = path.join(__dirname, "..");
 const SRC_ROOT = path.join(ROOT, "projects");
+const DISABLED_CONFIG = path.join(ROOT, "configs", "disabled-plugins.json");
 const DATA_DIR =
 	(dataDirFlag >= 0 ? args[dataDirFlag + 1] : process.env.PI_WEB_DATA_DIR) ||
 	path.join(os.homedir(), ".pi-web");
@@ -31,7 +33,7 @@ const ONLY = new Set(
 		.filter(Boolean),
 );
 /** 随包分发的文件（config.json 属于目标目录的本地配置，不从源带过去）。 */
-const COPY = ["manifest.json", "index.mjs", "README.md", "client"];
+const COPY = ["manifest.json", "index.mjs", "README.md", "client", "host-patch"];
 
 function log(msg) {
 	console.log(msg);
@@ -43,6 +45,13 @@ function readJson(file) {
 	} catch {
 		return null;
 	}
+}
+
+/** 从仓库配置读取需持久停用的插件 id。 */
+function disabledPlugins() {
+	const config = readJson(DISABLED_CONFIG);
+	if (!Array.isArray(config?.disabled)) return new Set();
+	return new Set(config.disabled.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()));
 }
 
 /** 插件源目录列表：projects/*-plugin。 */
@@ -68,6 +77,7 @@ function copyRecursive(src, dest) {
 }
 
 const sources = pluginSources();
+const DISABLED = disabledPlugins();
 if (!sources.length) {
 	console.error("✗ projects/ 下没有找到任何 *-plugin 目录（含 manifest.json）");
 	process.exit(1);
@@ -84,6 +94,14 @@ for (const src of sources) {
 	if (ONLY.size && !ONLY.has(id)) continue;
 
 	const dest = path.join(DATA_DIR, "plugins", id);
+	if (DISABLED.has(id)) {
+		if (dryRun) log(`[dry-run] ${id}：已停用，启动时将移除 ${dest}`);
+		else if (fs.existsSync(dest)) {
+			fs.rmSync(dest, { recursive: true, force: true });
+			log(`${id}：已停用，已移除旧运行副本`);
+		} else log(`${id}：已停用，跳过部署`);
+		continue;
+	}
 	log(`${dryRun ? "[dry-run] " : ""}${id}：${src} → ${dest}`);
 	if (dryRun) {
 		installed += 1;

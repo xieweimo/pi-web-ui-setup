@@ -3,24 +3,21 @@
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const { findWebUiRoot } = require('./pi-web-ui-locate');
+const { findWebUiRoot, packageVersion } = require('./pi-web-ui-locate');
 const root = path.resolve(__dirname, '..');
 const webRoot = findWebUiRoot();
 if (!webRoot) {
   console.error('找不到 pi-web-ui 安装目录：请确认已完成安装，或检查 install.json。');
   process.exit(2);
 }
-const modulesRoot = path.dirname(webRoot);
-const pkg = (name) => {
-  const file = path.join(modulesRoot, name, 'package.json');
-  if (!fs.existsSync(file)) {
-    console.error(`找不到 ${name} 的 package.json：${file}`);
-    process.exit(2);
-  }
-  return JSON.parse(fs.readFileSync(file, 'utf8')).version;
-};
-const pi = pkg('@earendil-works/pi-coding-agent');
-const web = pkg('pi-web-ui');
+// 版本判定必须与 scripts/check-pi-web-ui-patches.js 一致：**优先自带副本**（服务实际加载的那份），
+// 再回落到全局 npm 目录。过去这里只读全局，导致升级后自带副本更新、两份脚本各算一个版本。
+const pi = packageVersion('@earendil-works/pi-coding-agent');
+const web = packageVersion('pi-web-ui');
+if (!pi || !web) {
+  console.error(`版本识别失败：pi=${pi} pi-web-ui=${web}`);
+  process.exit(2);
+}
 const dir = path.join(root, 'configs', 'pi-web-ui-profiles');
 const profileFile = fs.readdirSync(dir).find(f => {
   const p = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));

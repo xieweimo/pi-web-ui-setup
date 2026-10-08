@@ -89,13 +89,44 @@ $perClientConversationPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-per
 # 所有动手改 bundle 的补丁跑完后再执行：把 index.html 的一次性缓存自愈标记
 # 对到当前 bundle 内容 hash（内容没变就不动，变了则浏览器下次打开自动换新代码）。
 $entryCacheBust = Join-Path $cwd 'scripts\pi-web-ui-entry-cache-bust.js'
+# 模型可见性：下拉只下发免费/订阅/白名单模型（服务端 agent-service.js）。
+$freeModelsOnlyPatch = Join-Path $cwd 'patches\patch-pi-web-ui-free-models-only.js'
+# 免费模型绿色「免费」徽标（前端 bundle 就地改）：必须排在 entryCacheBust 之前，
+# 否则浏览器继续用强缓存里的旧 bundle，界面看不到徽标。
+$freeModelBadgePatch = Join-Path $cwd 'patches\patch-pi-web-ui-free-model-badge.js'
+# 目标审查机制修复（空 feedback 兜底 + 审查工具证据 + 内置判定粒度）：只改服务端
+# goal-service.js，重启服务后生效（见 docs/升级适配/pi-web-ui-升级适配记录.md）。
+$goalReviewPatch = Join-Path $cwd 'patches\patch-pi-web-ui-goal-review.js'
 $danglingToolCallsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-dangling-tool-calls.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
+
+# 会话账本里的「非法工具名」自愈：某些 provider（实测 deepseek-flash）返回的 function.name 会被正文
+# 文本污染，一旦写进会话账本，该会话切到 openai-codex 就报 Invalid 'input[N].name'（上游要求
+# ^[a-zA-Z0-9_-]+$）并且重试永远失败。启动前幂等修复（只改 name、先备份），失败不阻断主服务。
+$sessionNameRepair = Join-Path $cwd 'scripts\repair-invalid-toolcall-names.js'
+# pi 内核补丁：从源头（写账本前）与出口（发请求前）双保险根治「非法 toolCall.name」
+# 导致的 Invalid 'input[N].name' 400。它改的是 pi 自己的产物（node_modules 里的
+# pi-agent-core / pi-ai），不在 pi-web-ui 包里；pi 升级会覆盖这些产物，所以每次启动
+# 都幂等重打（锚点失效时退出码 2，不会盲改；详见 patches/patch-pi-invalid-toolcall-names.js）。
+$invalidToolNamePatch = Join-Path $cwd 'patches\patch-pi-invalid-toolcall-names.js'
+# plan-marker 是 [[plan:...]] 行内标记本体（见 configs/pi-web-ui-profiles/*.json 的 profile）；
+# 它不在 apply-pi-web-ui-profile 之外的任何地方被调用，漏在这张表里 = 新机器启动后没装上。
+$planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch)) {
-    if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) { & node $patch | Out-Null }
+$failedPatches = @()
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch)) {
+    if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+        & node $patch | Out-Null
+        # 任何非零都算失败：2 = 锚点失效，1 = 未捕获异常（如 IO/权限），同样不能静默启服。
+        # 否则补丁没打上还照常启动，非法工具名会再次落账本、Invalid 'input[N].name' 老问题复发。
+        if ($LASTEXITCODE -ne 0) { $failedPatches += ((Split-Path $patch -Leaf) + "（退出码 " + $LASTEXITCODE + "）") }
+    }
+}
+if ($failedPatches.Count -gt 0) {
+    Write-Warning ('补丁执行失败（非零退出码），未改动本机代码：' + ($failedPatches -join '、'))
+    Write-Warning '请先运行 node scripts\check-pi-web-ui-patches.js 定位；pi 升级后必须重新适配补丁。'
 }
 # 看板不是普通装饰补丁：必须补齐、校验并跑行为测试。失败时拒绝启动，避免
 # 「标题里写了 =done、右侧仍是待执行」这类静默脏状态。
@@ -109,6 +140,15 @@ if ((Test-Path $planBoardManager) -and (Get-Command node -ErrorAction SilentlyCo
 }
 if ((Test-Path $quickPhraseQueueCleanup) -and (Get-Command node -ErrorAction SilentlyContinue)) {
     & node $quickPhraseQueueCleanup --remove | Out-Null
+}
+# 历史脏数据自愈（幂等；说明见 docs\使用与排查\codex-工具名污染-400排查与修复.md）。
+if ((Test-Path $sessionNameRepair) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    & node $sessionNameRepair --apply --quiet --backup-dir (Join-Path $cwd 'work\backups') | Out-Null
+    # 与补丁循环同样不吞码：写盘/环境失败是退出码 2，必须报出来，否则「自愈」静默失效、
+    # 用户切到 openai-codex 又是 400。这里只告警不阻断（服务仍可起）。
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning ('会话历史自愈失败（退出码 ' + $LASTEXITCODE + '）：脏工具名可能残留，运行 node scripts\repair-invalid-toolcall-names.js --apply 查看详情')
+    }
 }
 # 必须排在所有 bundle 补丁之后：把缓存自愈标记对齐到最终 bundle 内容。
 if ((Test-Path $entryCacheBust) -and (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -132,6 +172,19 @@ $logDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'work\pi-web-ui-prod'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $serviceStdout = Join-Path $logDir 'service.out.log'
 $serviceStderr = Join-Path $logDir 'service.err.log'
+# 启动器自身日志：vbs 是隐藏窗口，双击后出了问题没有任何可见痕迹（2026-09-29 的
+# 「启动不了」误判就是这么来的：服务其实在跑，只是启动器全程静默）。这里记录每次
+# 双击的结果，事后可核对「到底有没有跑过、走到了哪一步」。
+# 轮转：超过 512KB 直接改名 .1（覆盖旧的 .1），不做复杂保留策略。
+$launcherLog = Join-Path $logDir 'launcher.log'
+if ((Test-Path $launcherLog) -and (Get-Item $launcherLog).Length -gt 512KB) {
+    Move-Item -Force $launcherLog "$launcherLog.1"
+}
+function Write-LauncherLog([string]$Message) {
+    try { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Message" | Add-Content -Path $launcherLog -Encoding UTF8 } catch { }
+}
+Write-LauncherLog "启动器运行（powershell pid=$PID）"
+
 $env:PI_WEB_UI_WATCHDOG_PORT = [string]$watchdogPort
 if ($nodeExe -and (Test-Path $webEntry)) {
     @{
@@ -180,11 +233,25 @@ if (-not (Test-Listening)) {
         [System.Windows.Forms.MessageBox]::Show('pi-web-ui 启动失败，请重试。', 'pi-web-ui')
         exit 1
     }
+    Write-LauncherLog '服务未运行 → 已通过 watchdog 启动并确认端口就绪'
+} else {
+    Write-LauncherLog '服务已在运行 → 不重复启动'
 }
 
-# 2. 已有页面连着就不再开新标签（重跑启动器只为接管守护时不该多弹一个页面）
-if (-not (Get-NetTCPConnection -LocalPort $port -State Established -ErrorAction SilentlyContinue)) {
+# 2. 已有页面连着就不再开新标签（重跑启动器只为接管守护时不该多弹一个页面）。
+#   但「完全静默」会让用户以为启动失败（2026-09-29 实际误判）：此时给一次明确的
+#   可见反馈，保证双击一定有下文。弹框会阻塞到点击确定，因此它出现在监控循环
+#   之前：不点确定只是不接管守护，服务本身照常运行。
+$pageConnected = [bool](Get-NetTCPConnection -LocalPort $port -State Established -ErrorAction SilentlyContinue)
+if (-not $pageConnected) {
     Start-Process "http://localhost:$port"
+    Write-LauncherLog "已打开页面 http://localhost:$port"
+} else {
+    Write-LauncherLog '页面已连接 → 不重复开标签，弹提示告知已在运行'
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(
+        "pi-web-ui 已经在运行，服务正常，无需重启。`n`n端口：http://localhost:$port`n`n刷新界面：在页面上按 F5`n重启服务：页面里点「重启网页服务」",
+        'pi-web-ui 已在运行') | Out-Null
 }
 Start-Sleep -Seconds 5
 

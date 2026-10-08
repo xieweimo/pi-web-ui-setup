@@ -42,7 +42,7 @@ const GLOBAL_CONV = {
 	stats: { totalMessages: 4 },
 };
 
-function makeHost() {
+function makeHost(api = "legacy") {
 	const sent = [];
 	const broadcasts = [];
 	const handlers = { message: [], attach: [] };
@@ -62,14 +62,20 @@ function makeHost() {
 		onSettingsChanged: () => () => {},
 		sendTo: (clientId, payload) => sent.push({ clientId, payload }),
 		broadcast: (payload) => broadcasts.push(payload.state),
-		// 补丁后的宿主：传 clientId 取该页面打开的对话。
-		getActiveConversation: (clientId) => (clientId ? CONVS[clientId] ?? null : GLOBAL_CONV),
+		// 旧版补丁接收字符串；上游 #542 接收 { clientId }，传错形状时回落全局。
+		getActiveConversation: (options) => {
+			const clientId = api === "official"
+				? (typeof options === "object" ? options?.clientId : undefined)
+				: (typeof options === "string" ? options : undefined);
+			return clientId ? { ...CONVS[clientId], clientId } : GLOBAL_CONV;
+		},
 		storage: { get: (_k, f) => f, set: () => {} },
 	};
 	return { host, sent, broadcasts, handlers };
 }
 
-const { host, sent, broadcasts, handlers } = makeHost();
+for (const api of ["legacy", "official"]) {
+const { host, sent, broadcasts, handlers } = makeHost(api);
 const cleanup = plugin.activate(host);
 // 模拟两个浏览器页面接入（宿主会带上各自的 clientId）。
 for (const clientId of Object.keys(CONVS)) {
@@ -112,4 +118,5 @@ assert.ok(
 	"定向消息缺少 clientId",
 );
 
-console.log("✓ 按页面隔离回归测试全部通过（两个页面各拿自己对话的状态）");
+console.log(`✓ ${api} 按页面隔离回归测试通过（两个页面各拿自己对话的状态）`);
+}

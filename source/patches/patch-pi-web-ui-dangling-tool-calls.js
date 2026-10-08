@@ -23,6 +23,12 @@
  * 只认真正会上线的链尾 assistant。这样中断留下的幽灵调用不会被补结果。
  *
  * 幂等（v1 → v2 自动升级）；精确匹配 0.95.0 产物；锚点变化时退出码 2，不做模糊替换。
+ *
+ * 退役（0.96.0 起）：上游 issue #332 已内建等价实现——dist/server/dangling-tools.js 自带
+ * `export function tailAssistantToolCallIds(...)`，且守卫比本补丁更严（除 error/aborted 外，
+ * 遇到 user 消息也立即停止回溯）。上游已有实现时本补丁绝不能再注入：同一作用域出现两个
+ * `function tailAssistantToolCallIds` 会让服务端 bundle 直接 SyntaxError，服务起不来
+ * （2026-09-29 实际踩过）。脚本保留的职责改为「检测到上游内建即清除历史注入的残留块」。
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -37,6 +43,21 @@ if (!target || !fs.existsSync(target)) {
 	process.exit(1);
 }
 let source = fs.readFileSync(target, "utf8");
+
+// 退役判据：上游自带 tailAssistantToolCallIds（0.96.0+）。此时只需清理历史注入的残留块，
+// 绝不重新注入——重复的 function 声明会让整个服务端 bundle 无法解析。
+if (/export function tailAssistantToolCallIds\(/.test(source)) {
+	const injected = /\/\*\*\n \* dangling-active-chain-filter-v1[\s\S]*?\nfunction tailAssistantToolCallIds\(entries, lastId\) \{[\s\S]*?\n\}\n/;
+	if (injected.test(source)) {
+		source = source.replace(injected, "");
+		fs.writeFileSync(target, source, "utf8");
+		console.log("✓ 上游已内建 tailAssistantToolCallIds（0.96.0+），本补丁退役并已清除历史注入的重复声明");
+	} else {
+		console.log("✓ 上游已内建 tailAssistantToolCallIds（0.96.0+），本补丁退役，无需注入");
+	}
+	process.exit(0);
+}
+
 if (source.includes(marker)) {
 	console.log("✓ 悬空 toolCall 分支过滤补丁 v2 已存在");
 	process.exit(0);

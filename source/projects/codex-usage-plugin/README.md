@@ -179,24 +179,60 @@ node projects/codex-usage-plugin/tests/per-client-state.test.mjs
 node projects/codex-usage-plugin/tests/stale-client-ttl.test.mjs
 node projects/codex-usage-plugin/tests/plan-decoupling.test.mjs
 node projects/codex-usage-plugin/tests/state-alignment.test.mjs
+node projects/codex-usage-plugin/tests/host-patch.test.mjs
+node projects/codex-usage-plugin/tests/market-entry.test.mjs
 node projects/codex-usage-plugin/tests/manual-test.mjs
 node scripts/install-plugins.js --only codex-usage
 node scripts/check-codex-usage.js --reload
 ```
 
 手工测试覆盖：Codex 订阅、多 provider API 按量、非 Codex 订阅、预付积分中转和未知 provider。
-识别引擎单元测试注入认证与 endpoint 元数据，覆盖全部官方 endpoint、订阅特征、中转反证和规则优先级，不依赖本机真实配置。会话账本回归测试覆盖活动分支排除、辅助调用、缺失成本与模型级计费规则冲突；会话文件身份测试复现重开后的短内存 id（`c1`/`c4`）复用，断言始终以 `sessionFile` 读取完整 JSONL 账本、缓存不会串会话，同样不依赖真实会话或网络。按页面隔离测试用两个页面指向不同对话，断言各自拿到自己的状态；幽灵页面测试验证心跳过期后死页面不再占据状态栏；解耦测试验证看板/规划条目不会改动成本账本。
+识别引擎单元测试注入认证与 endpoint 元数据，覆盖全部官方 endpoint（含 Xiaomi MiMo）、订阅特征、中转反证和规则优先级，不依赖本机真实配置。会话账本回归测试覆盖活动分支排除、辅助调用、缺失成本与模型级计费规则冲突；会话文件身份测试复现重开后的短内存 id（`c1`/`c4`）复用，断言始终以 `sessionFile` 读取完整 JSONL 账本、缓存不会串会话，同样不依赖真实会话或网络。按页面隔离测试用两个页面指向不同对话，断言各自拿到自己的状态；幽灵页面测试验证心跳过期后死页面不再占据状态栏；解耦测试验证看板/规划条目不会改动成本账本。
+
+## 多模型连续账本与金额来源
+
+- 完整 JSONL 账本沿当前分支读取，按 **Provider → 模型** 分列：切模型、切 API 提供商都不会清零或串账；顶部仍给本会话 API 按量总计。
+- 每个模型行显示累计金额、调用次数、输入/输出 token、平均每次成本和有效每百万 token 成本，便于比较模型花钱速度。
+- `usage.cost.total` 是第一优先级，显示为“响应成本”；只有该字段缺失时才会使用已核实的官方 token 牌价回退。未收录精确官方价的模型会标记缺成本，不会拿猜测价伪装成控制台账单。
+- 订阅、免费模型统一显示“订阅（不计费）”或“免费，不计费”；目录理论价仅用于解释为什么被排除，绝不并入 API 总计。
+- 当前已核实的官方牌价回退覆盖 DeepSeek Flash / V4 Pro 与 Xiaomi `mimo-v2.6-flash`；小米价格来源为官方文档的实时 API 价（缓存命中 `$0.0028/M`、未命中输入 `$0.14/M`、输出 `$0.28/M`，2026-09-26 核实）。NVIDIA NIM 试用接口未见逐 token 官方价，保留为免费/待确认，不套用 GLM 其他渠道的牌价。
+
+## 多标签 / 并行对话 / 子代理：宿主补丁（可选，一条命令）
+
+上游 #542 已在 `main` 增加 `host.getActiveConversation({ clientId })`：在包含该提交的版本上，
+插件无需补丁即可按标签页分别读取当前对话。旧版宿主若已安装下述历史补丁，插件仍兼容
+字符串参数 `getActiveConversation(clientId)`；未经补丁的旧版，多标签可能降级显示「同步中」。
+
+- **包含 #542 的版本**：无须宿主补丁；多标签页应分别显示各自会话。
+- **旧版且只开一个标签页**：无须宿主补丁。
+- **旧版同时看多个对话 / 跑子代理**：可选历史宿主补丁（幂等、失配拒绝）：
+
+```bash
+node <插件目录>/host-patch/apply.cjs            # 应用
+node <插件目录>/host-patch/apply.cjs --dry-run  # 只预览
+```
+
+不打补丁也不会算错钱：那些页面会显示 `⚡ 同步中…`（绝不把别的对话的数字报给你）。
+原理、锚点清单与风险见 `host-patch/README.md`；等价性/幂等/失配不写盘由
+`tests/host-patch.test.mjs` 守住。
+
+## 插件市场发布
+
+本公开仓库的 `catalog.json` 已收录 `codex-usage`，可从 **设置 → 界面插件 → 插件市场** 添加该目录源后安装，或执行：
+
+```bash
+pi-web-ui install xieweimo/pi-web-ui-contrib/plugins/codex-usage
+```
+
+进入 pi-web-ui 内置的默认市场目录还需向上游 `plugins/catalog.json` 提交 PR。
 
 ## 按页面隔离（多标签 / 并行对话 / 子代理）
 
-宿主的插件快照只给「全客户端最近活跃对话」（`readConversationForPlugins()`），而状态栏是全局单例。
-只要有第二个标签页、并行对话或子代理在跑，某个页面就会挂上别的对话的模型与额度
-（典型现象：模型选了 DeepSeek，底部却显示 `openai-codex` 的额度窗口）。
+新版宿主 #542 提供按 `clientId` 读取各标签页会话的能力；旧版可选历史宿主补丁。
+插件用以下防线避免并行对话时把别的页面的额度当成本页数据：
 
-本插件配合宿主补丁 `patches/patch-pi-web-ui-plugin-per-client-conversation.js` 修正：
-
-- 服务端在每个页面接入（`onAttach` / `onMessage` 的 `from`）时记住 `clientId`，刷新时用
-  `host.getActiveConversation(clientId)` 取**该页面打开的对话**，各算一份并用
+- 服务端在每个页面接入（`onAttach` / `onMessage` 的 `from`）时记住 `clientId`，刷新时优先用
+  `host.getActiveConversation({ clientId })`（旧补丁回退字符串参数）取**该页面打开的对话**，各算一份并用
   `host.sendTo(clientId, { state, perClient: true })` 定向下发；汇率与 Codex 额度这类
   账号级数据每轮只查一次；
 - 客户端只在「本页面那份」与「宿主槽位那份」**不一致**时才接管底部状态栏

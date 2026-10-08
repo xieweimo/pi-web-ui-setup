@@ -2,9 +2,9 @@
 	"id": "codex-usage",
 	"name": "额度与成本",
 	"icon": "⚡",
-	"version": "2.0.0",
+	"version": "2.1.1",
 	"apiVersion": 2,
-	"description": "通用模型额度与成本：Codex 等订阅调用排除理论 API 价；按量、积分与未知计费 provider 按会话账本汇总美元/人民币成本，并支持自定义计费模式。",
+	"description": "会话级多模型账本：按 Provider / 模型连续累计 API 成本、展示 token 与有效单价；订阅调用明确不计费，缺响应成本时仅按已核实官方价回退。",
 	"permissions": [
 		"http",
 		"ui"

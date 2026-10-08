@@ -5,7 +5,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # BOM as ANSI/GBK, so non-ASCII comments break parsing. Explanations live in README.md.
 
 $setupVersion = 'v2026-09-24.1'
-$pkgVersion  = 'pi-0.87.1_web-0.95.0'
+$pkgVersion  = 'pi-1.0.2_web-0.99.0'
 $zipName     = "PiWebUI-Setup_$pkgVersion.zip"
 $nodeVersion = if ($env:PI_SETUP_NODE_VERSION) { $env:PI_SETUP_NODE_VERSION } else { 'v22.23.2' }
 $root        = Join-Path $env:USERPROFILE 'PiWebUI'
@@ -26,8 +26,8 @@ $nodeBases = @(
 $mirror   = 'https://registry.npmmirror.com'
 $official = 'https://registry.npmjs.org'
 $packages = @(
-  @{ name = '@earendil-works/pi-coding-agent'; ver = '0.87.1'; leaf = 'pi-coding-agent-0.87.1.tgz' },
-  @{ name = 'pi-web-ui';                       ver = '0.95.0'; leaf = 'pi-web-ui-0.95.0.tgz' }
+  @{ name = '@earendil-works/pi-coding-agent'; ver = '1.0.2'; leaf = 'pi-coding-agent-1.0.2.tgz' },
+  @{ name = 'pi-web-ui';                       ver = '0.99.0'; leaf = 'pi-web-ui-0.99.0.tgz' }
 )
 $allowScripts = 'node-pty,esbuild,protobufjs,@google/genai'
 

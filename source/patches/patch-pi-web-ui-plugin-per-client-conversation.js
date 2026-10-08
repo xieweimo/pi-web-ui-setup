@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * 让插件快照支持「按浏览器客户端取对话」+「拿到会话文件路径」，并让全局兜底跳过子代理会话。
+ * 让插件快照支持「按浏览器客户端取对话」，并让全局兜底跳过子代理会话。
  *
  * 背景（两件真实事故）：
  * 1) pluginMgr.conversationProvider 只提供「全客户端最近活跃对话」（at 最大者）。只要有第二个
  *    标签页、并行对话或子代理在跑，插件拿到的就不是当前页面正在看的那个对话 —— 表现就是
  *    「模型选了 DeepSeek，底部却显示 openai-codex 的额度窗口」；
- * 2) 快照里的 conversationId 只是**每客户端的短 id**（c1/c4…，源码里写明了「内存对话 id 重启
- *    即失效，不可单独做持久键」），不是会话文件名里的 uuid。插件按它去猜 `*_<id>.jsonl` 永远
- *    找不到 → 成本账本退化成「当前上下文回退」→ 上下文一压缩、或关掉对话再重开就变 0。
- *    所以快照必须把会话文件路径给出来。
+ * 2) 全局兜底不区分子代理：子代理会话往往更“活跃”，会把页面真正在看的对话挤掉。
  *
- * 本补丁做五件事：
- *  1) ClientSession.readConversationForPlugins(conversationId?)：可指定对话，并带上 isSubagent
- *     与 sessionFile（会话文件路径）；
+ * 注意：会话文件路径 `sessionFile`（以及 sessionId / sessionDir / model）自 pi-web-ui **0.99.0**
+ * 起已由宿主**原生**提供（见 server/agent-service.js 的 readConversationForPlugins 返回值），
+ * 本补丁不再自己往快照里加字段 —— 重复加只会造出同名键覆盖原生值。
+ *
+ * 本补丁做四件事：
+ *  1) ClientSession.readConversationForPlugins(conversationId?)：可指定对话，并带上 isSubagent；
  *  2) 聚合层 readConversationForPlugins(clientId?)：传了 clientId 就取该客户端当前打开的
  *     对话（cs.activeId），否则回落到「最近活跃的非子代理对话」；
  *  3) PluginManager.getActiveConversation(clientId) 与插件 host.getActiveConversation(clientId)
@@ -79,21 +79,13 @@ const edits = [
 	},
 	{
 		file: files.agentService,
-		label: "agent-service: 快照带 isSubagent + sessionFile",
-		applied: "plugin-session-file-patch",
+		label: "agent-service: 快照带 isSubagent",
+		// 只认我们这处：原生代码里没有这行（sessionFile 已由 0.99.0 原生提供，本补丁不再插手）。
+		applied: "isSubagent: Boolean(target.isSubagent),",
 		needle: `                messages: this.messagesOf(target),`,
-		replacement: `                // plugin-per-client-conversation-patch: 全局兜底要能跳过子代理会话。
+		replacement: `                // plugin-per-client-conversation-patch: 全局兜底要能跳过子代理会话
+                // （会话文件路径 sessionFile 自 pi-web-ui 0.99.0 起由宿主原生提供，这里不再加）。
                 isSubagent: Boolean(target.isSubagent),
-                // plugin-session-file-patch: 会话文件路径。conversationId 只是每客户端短 id
-                // （重启即失效、也不是文件名），插件要按这个路径读完整账本。
-                sessionFile: (() => {
-                    try {
-                        return target.session.sessionFile ?? null;
-                    }
-                    catch {
-                        return null;
-                    }
-                })(),
                 messages: this.messagesOf(target),`,
 	},
 	{
@@ -158,13 +150,15 @@ const edits = [
 		label: "plugins: getActiveConversation(clientId)",
 		applied: "plugin-per-client-conversation-patch: clientId 有值",
 		needle: `    getActiveConversation() {
+        let snap;
         try {
-            return this.conversationProvider?.() ?? null;
+            snap = this.conversationProvider?.() ?? null;
         }`,
 		replacement: `    getActiveConversation(clientId) {
+        let snap;
         try {
             // plugin-per-client-conversation-patch: clientId 有值 = 取该页面正在看的对话（无则各自回落）。
-            return this.conversationProvider?.(clientId) ?? null;
+            snap = this.conversationProvider?.(clientId) ?? null;
         }`,
 	},
 	{
@@ -206,5 +200,5 @@ for (const e of edits) {
 	const next = sources.get(e.file);
 	if (next !== read(e.file)) write(e.file, next);
 }
-console.log("✓ per-client conversation / sessionFile 补丁：");
+console.log("✓ per-client conversation 补丁：");
 for (const line of done) console.log(`  · ${line}`);

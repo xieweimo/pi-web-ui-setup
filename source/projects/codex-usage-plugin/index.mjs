@@ -34,6 +34,7 @@ const OFFICIAL_METERED_HOSTS = new Set([
 	// OpenAI / Anthropic / Google
 	"api.openai.com",
 	"api.anthropic.com",
+	"api.xiaomimimo.com",
 	"generativelanguage.googleapis.com",
 	"aiplatform.googleapis.com",
 	"portal.qwen.ai",
@@ -78,12 +79,24 @@ const KNOWN_METERED_PROVIDERS = new Set([
 	"cohere", "groq", "perplexity", "perplexity-labs", "together", "fireworks",
 	"moonshot", "kimi", "zai", "zhipu", "bigmodel", "qwen", "dashscope",
 	"minimax", "baichuan", "stepfun", "lingyiwanwu", "baidu", "tencent", "hunyuan",
-	"doubao", "volcengine", "siliconflow", "novita", "cerebras", "cerebras-code",
+	"doubao", "volcengine", "siliconflow", "novita", "cerebras", "cerebras-code", "xiaomi",
 ]);
 /** 汇率缓存时长：12 小时。 */
 const FX_TTL_MS = 12 * 3600_000;
 /** 汇率兜底值（抓取失败且无缓存时使用）。 */
 const FX_FALLBACK = 7.2;
+
+/**
+ * 已按厂商官方公开价核实的 token 牌价（USD / 1M token）。
+ * 只在账本缺少 usage.cost.total 时回退；有响应成本时绝不覆盖它。
+ * DeepSeek Flash 的 peak 价来自 https://api-docs.deepseek.com/quick_start/pricing/（2026-09-26 核实）。
+ */
+const OFFICIAL_TOKEN_PRICES = {
+	"deepseek/deepseek-flash": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0, label: "DeepSeek 官方 peak 价", verifiedAt: "2026-09-26" },
+	"deepseek/deepseek-v4-pro": { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0, label: "DeepSeek 官方价", verifiedAt: "2026-09-26" },
+	// https://mimo.mi.com/docs/en-US/quick-start/usage-guide/text-generation/batch-api（实时 API 价，2026-09-26 核实）
+	"xiaomi/mimo-v2.6-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0, label: "Xiaomi MiMo 官方实时 API 价", verifiedAt: "2026-09-26" },
+};
 
 /** pi 的配置目录（agentDir）：可用 PI_CODING_AGENT_DIR 覆盖。 */
 function agentDir() {
@@ -376,6 +389,9 @@ function billingProfile(provider, model, cfg, inject = {}) {
 	if (/\/coding(?:\/|$)/i.test(meta.baseUrl) || /coding[-_]?plan/i.test(p)) {
 		return { mode: "subscription", label: p, source: "known-coding-plan", confidence: "medium", ...signal };
 	}
+	if (p === "openrouter" && /:free$/i.test(m)) {
+		return { mode: "free", label: "OpenRouter 免费模型", source: "openrouter-free", confidence: "high", ...signal };
+	}
 	if (hostname === "openrouter.ai" || p === "openrouter") {
 		return { mode: "prepaid", label: "OpenRouter credits", source: "known-prepaid", confidence: "medium", ...signal };
 	}
@@ -421,14 +437,62 @@ function newCostBook(source) {
 	return { source, providers: new Map() };
 }
 
-function addCost(book, provider, model, profile, cost, kind) {
+function tokenCount(usage, key) {
+	const n = Number(usage?.[key]);
+	return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** 响应未给成本时，仅使用已核实的官方价估算；未收录模型返回 null，禁止瞎算。 */
+function officialPriceFallback(provider, model, usage) {
+	const price = OFFICIAL_TOKEN_PRICES[`${provider}/${model}`];
+	if (!price) return null;
+	const usd =
+		(tokenCount(usage, "input") * Number(price.input || 0) +
+			tokenCount(usage, "output") * Number(price.output || 0) +
+			tokenCount(usage, "cacheRead") * Number(price.cacheRead || 0) +
+			tokenCount(usage, "cacheWrite") * Number(price.cacheWrite || 0)) /
+		1_000_000;
+	return { usd, source: "official-price", priceLabel: price.label, priceVerifiedAt: price.verifiedAt };
+}
+
+/** 账本 usage.cost.total 优先；不存在才尝试官方牌价。 */
+function resolvedUsageCost(provider, model, usage) {
+	const reported = usageTotal(usage);
+	if (reported !== null) return { usd: reported, source: "usage-cost", priceLabel: "响应/账本成本字段", priceVerifiedAt: null };
+	return officialPriceFallback(provider, model, usage) ?? { usd: null, source: "missing", priceLabel: "缺少成本字段且无已核实官方价", priceVerifiedAt: null };
+}
+
+function newModelRow(model, profile) {
+	return {
+		model: model || "unknown",
+		mode: profile.mode,
+		billingSource: profile.source,
+		billingConfidence: profile.confidence,
+		billingLabel: profile.label || "",
+		billingNote: profile.note || "",
+		usd: 0,
+		theoreticalUsd: 0,
+		messages: 0,
+		auxiliaryCalls: 0,
+		missingCostMessages: 0,
+		usageCostCalls: 0,
+		officialPriceCalls: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+	};
+}
+
+function addCost(book, provider, model, profile, usage, kind) {
 	const key = String(provider || "unknown");
+	const modelKey = String(model || "unknown");
 	const mode = profile.mode;
 	let row = book.providers.get(key);
 	if (!row) {
 		row = {
 			provider: key,
-			models: new Set(),
+			models: new Map(),
 			mode,
 			billingSource: profile.source,
 			billingConfidence: profile.confidence,
@@ -444,27 +508,56 @@ function addCost(book, provider, model, profile, cost, kind) {
 		};
 		book.providers.set(key, row);
 	}
-	if (model) row.models.add(String(model));
+	let modelRow = row.models.get(modelKey);
+	if (!modelRow) {
+		modelRow = newModelRow(modelKey, profile);
+		row.models.set(modelKey, modelRow);
+	}
 	// 同一 provider 若会话中模型级覆盖不同，保守标为 mixed，避免把金额错误称为真实账单。
 	if (row.mode !== mode) {
 		row.mode = "unknown";
 		row.billingConfidence = "low";
 		row.billingNote = "同一 provider 在当前会话中命中了不同计费规则";
 	}
-	if (!Number.isFinite(cost)) {
+	const detail = resolvedUsageCost(key, modelKey, usage);
+	const target = mode === "subscription" || mode === "free" ? "theoreticalUsd" : "usd";
+	const tokens = ["input", "output", "cacheRead", "cacheWrite"];
+	for (const token of tokens) modelRow[`${token}Tokens`] += tokenCount(usage, token);
+	if (!Number.isFinite(detail.usd)) {
 		row.missingCostMessages += 1;
-		return;
+		modelRow.missingCostMessages += 1;
+	} else {
+		row[target] += detail.usd;
+		modelRow[target] += detail.usd;
+		if (detail.source === "usage-cost") modelRow.usageCostCalls += 1;
+		if (detail.source === "official-price") modelRow.officialPriceCalls += 1;
 	}
-	if (mode === "subscription" || mode === "free") row.theoreticalUsd += cost;
-	else row.usd += cost;
-	if (kind === "message") row.messages += 1;
-	else row.auxiliaryCalls += 1;
+	if (kind === "message") {
+		row.messages += 1;
+		modelRow.messages += 1;
+	} else {
+		row.auxiliaryCalls += 1;
+		modelRow.auxiliaryCalls += 1;
+	}
+}
+
+function finalizeModelRow(row) {
+	const calls = row.messages + row.auxiliaryCalls;
+	const tokens = row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheWriteTokens;
+	const billedUsd = row.usd + row.theoreticalUsd;
+	return {
+		...row,
+		calls,
+		tokens,
+		avgUsdPerCall: calls ? billedUsd / calls : 0,
+		usdPerMillionTokens: tokens ? (billedUsd * 1_000_000) / tokens : null,
+	};
 }
 
 function finalizeCostBook(book) {
 	const providers = [...book.providers.values()].map((row) => ({
 		...row,
-		models: [...row.models],
+		models: [...row.models.values()].map(finalizeModelRow).sort((a, b) => (b.usd + b.theoreticalUsd) - (a.usd + a.theoreticalUsd)),
 	}));
 	return {
 		providers,
@@ -483,7 +576,7 @@ function contextCostBreakdown(conv, cfg) {
 	const book = newCostBook("context-fallback");
 	for (const m of Array.isArray(conv?.messages) ? conv.messages : []) {
 		if (m?.role !== "assistant" || !m.provider) continue;
-		addCost(book, m.provider, m.model, billingProfile(m.provider, m.model, cfg), Number(m.usageCost), "message");
+		addCost(book, m.provider, m.model, billingProfile(m.provider, m.model, cfg), { cost: { total: Number(m.usageCost) } }, "message");
 	}
 	return finalizeCostBook(book);
 }
@@ -613,7 +706,7 @@ function costBreakdownFromRows(rows, cfg) {
 			const provider = entry.message.provider ?? activeProvider;
 			const model = entry.message.model ?? activeModel;
 			if (!provider) continue;
-			addCost(book, provider, model, billingProfile(provider, model, cfg), usageTotal(entry.message.usage), "message");
+			addCost(book, provider, model, billingProfile(provider, model, cfg), entry.message.usage, "message");
 			continue;
 		}
 		const hasAuxUsage =
@@ -626,7 +719,7 @@ function costBreakdownFromRows(rows, cfg) {
 		const model = entry.modelId ?? entry.model ?? activeModel;
 		if (!provider) continue;
 		const usage = entry.usage ?? entry.message?.usage;
-		addCost(book, provider, model, billingProfile(provider, model, cfg), usageTotal(usage), "auxiliary");
+		addCost(book, provider, model, billingProfile(provider, model, cfg), usage, "auxiliary");
 	}
 	return finalizeCostBook(book);
 }
@@ -699,6 +792,31 @@ function barWindowLabel(win) {
 	return h >= 1 ? `${Math.round(h)}h` : `${Math.round(sec / 60)}m`;
 }
 
+/** 状态里按 Provider 的按量金额拆分（订阅/免费行不计入，也不该计入缴费）。 */
+function providerCostSplit(state) {
+	return (Array.isArray(state?.providers) ? state.providers : [])
+		.filter((row) => !["subscription", "free"].includes(row.mode) && Number(row.usd || row.cny) !== 0)
+		.map((row) => ({ provider: row.provider, usd: Number(row.usd) || 0, cny: Number(row.cny) || 0 }));
+}
+
+/** 当前选中模型在本对话中的累计（找不到该行返回 null，绝不拿总代替模型）。 */
+function currentModelCostRow(state) {
+	const provider = state?.model?.provider;
+	const model = state?.model?.model;
+	if (!provider) return null;
+	const row = (Array.isArray(state?.providers) ? state.providers : []).find((r) => r.provider === provider);
+	const modelRow = (Array.isArray(row?.models) ? row.models : []).find((r) => r.model === model);
+	if (!modelRow) return null;
+	return {
+		provider,
+		model,
+		mode: modelRow.mode,
+		usd: Number(modelRow.usd) || 0,
+		cny: Number(modelRow.cny) || 0,
+		calls: Number(modelRow.calls) || 0,
+	};
+}
+
 /** 一行摘要：订阅 → 窗口百分比；无额度 adapter 的订阅 → provider 名；按量 → 人民币成本。 */
 function barText(state) {
 	if (!state || state.kind === "loading") return "⚡ …";
@@ -722,7 +840,14 @@ function barHint(state) {
 	if (state.kind === "cost") {
 		const rate = Number(state.rate);
 		const rateText = Number.isFinite(rate) ? `（1 USD = ${rate.toFixed(4)} CNY` + (state.rateSource ? `，来源 ${state.rateSource}` : "") + "）" : "";
-		return `本会话计费估算 ≈ $${Number(state.usd || 0).toFixed(4)} ${rateText}`;
+		const split = providerCostSplit(state)
+			.map((row) => `${row.provider} ¥${row.cny.toFixed(2)}`)
+			.join(" · ");
+		const cur = currentModelCostRow(state);
+		const curText = cur
+			? `；当前模型 ${cur.provider}/${cur.model}：${cur.mode === "free" ? "免费" : `¥${cur.cny.toFixed(2)}（${cur.calls} 次）`}`
+			: "";
+		return `本会话 API 按量总计 ≈ $${Number(state.usd || 0).toFixed(4)} ${rateText}${split ? `｜按 Provider：${split}` : ""}${curText}`;
 	}
 	const provider = state.provider || state.model?.provider || "订阅";
 	if (state.quotaAvailable === false) {
@@ -740,7 +865,7 @@ function barHint(state) {
 }
 
 /** 供单元测试直接验证识别逻辑；生产代码走 export default。 */
-export { billingProfile, barText, barHint, costBreakdownFromRows, costCacheKey, fullSessionCostBreakdown, sessionLedgerFile };
+export { billingProfile, barText, barHint, costBreakdownFromRows, costCacheKey, fullSessionCostBreakdown, sessionLedgerFile, providerCostSplit, currentModelCostRow };
 
 export default {
 	activate(host) {
@@ -754,7 +879,7 @@ export default {
 		/**
 		 * 已接入的浏览器页面：clientId → 该页面最近一次收到的状态。
 		 * 宿主只会给「全客户端最近活跃对话」，多标签/并行对话/子代理下会串页，
-		 * 所以这里按页面各算一份并定向下发（host.getActiveConversation(clientId)）。
+		 * 所以这里按页面各算一份并定向下发（上游 #542 使用 { clientId }）。
 		 */
 		const clientStates = new Map();
 		/** 最多跟踪这么多页面，防止长时间开着多个标签页时无限增长。 */
@@ -768,15 +893,18 @@ export default {
 		/** 宿主是否支持官方 bottombar 槽位（manifest.ui 里申报了 codex-usage:bar）。 */
 		const slotBarSupported = typeof host.ui?.update === "function";
 
-		/** 取某个页面当前打开的对话；宿主不支持按客户端取（旧版）时回落全局快照。 */
+		/** 上游 #542 接收 { clientId }；旧版宿主补丁接收字符串。 */
 		function convFor(clientId) {
 			if (clientId) {
 				try {
-					const scoped = host.getActiveConversation?.(clientId);
-					if (scoped) return scoped;
+					const scoped = host.getActiveConversation?.({ clientId });
+					if (scoped?.clientId === clientId) return scoped;
+					// 旧版补丁不返回 clientId；官方 API 遇到字符串会回落全局，不能误认作本页。
+					const legacy = host.getActiveConversation?.(clientId);
+					if (legacy && (!legacy.clientId || legacy.clientId === clientId)) return legacy;
 				}
 				catch {
-					/* 旧版宿主忽略参数：回落全局 */
+					/* 旧版宿主不支持按客户端查询：回落全局 */
 				}
 			}
 			return host.getActiveConversation?.() ?? null;
@@ -867,6 +995,11 @@ export default {
 					...row,
 					cny: row.usd * fx.rate,
 					theoreticalCny: row.theoreticalUsd * fx.rate,
+					models: (row.models ?? []).map((modelRow) => ({
+						...modelRow,
+						cny: modelRow.usd * fx.rate,
+						theoreticalCny: modelRow.theoreticalUsd * fx.rate,
+					})),
 				}));
 				const costSummary = {
 					selectedProvider,

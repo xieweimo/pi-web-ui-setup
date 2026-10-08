@@ -42,4 +42,29 @@ function locateWebUiFile(...rel) {
 	return root ? path.join(root, ...rel) : null;
 }
 
-module.exports = { findWebUiRoot, locateWebUiFile };
+/**
+ * 读某个包的版本号，**优先自带副本、再全局**。
+ *
+ * 为什么顺序很重要：pi-web-ui 的依赖范围是 `>=0.85.1`，`npm i -g pi-web-ui` 会把**最新**的
+ * pi-coding-agent 装到 `<pi-web-ui>/node_modules/` 下（自带副本）；而机器上可能另有一份
+ * 更旧的全局 CLI 副本。服务实际加载的是自带那份（`resolve-global-sdk` 也会跟随更新的），
+ * 所以版本档案必须以自带副本为准 —— 否则检查脚本与应用脚本会各算一个版本，谁也跑不通。
+ */
+function packageVersion(name) {
+	const root = findWebUiRoot();
+	const candidates = [
+		path.join(root || "", "node_modules", ...name.split("/"), "package.json"),
+		path.join(process.env.APPDATA || "", "npm", "node_modules", ...name.split("/"), "package.json"),
+	];
+	for (const c of candidates) {
+		try {
+			const j = JSON.parse(fs.readFileSync(c, "utf8"));
+			if (j?.version) return j.version;
+		} catch {
+			/* 该副本不存在：试下一个 */
+		}
+	}
+	return null;
+}
+
+module.exports = { findWebUiRoot, locateWebUiFile, packageVersion };

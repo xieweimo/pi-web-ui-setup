@@ -1,0 +1,90 @@
+{
+	"id": "proxy-health",
+	"name": "代理健康",
+	"icon": "🌐",
+	"version": "1.1.0",
+	"apiVersion": 2,
+	"description": "探测可配置的 HTTPS 目标与代理链路；无代理时检测直连，失败时对比第二目标，给出谨慎的网络故障提示。", 
+	"permissions": [
+		"http",
+		"ui"
+	],
+	"ui": {
+		"bottombar": [
+			{
+				"id": "bar",
+				"label": "🌐 …",
+				"labelEn": "🌐 …",
+				"kind": "badge",
+				"order": 95,
+				"group": "net",
+				"hint": "目标站点与代理链路连通性（正常时低调，异常时查看详情）",
+				"hintEn": "Proxy connectivity to chatgpt.com"
+			}
+		]
+	},
+	"settings": [
+		{
+			"key": "intervalSec",
+			"type": "number",
+			"label": "探测间隔(秒)",
+			"default": 30,
+			"min": 10,
+			"max": 600,
+			"hint": "正常时每轮只探目标；达到失败阈值才探对照目标"
+		},
+		{
+			"key": "timeoutMs",
+			"type": "number",
+			"label": "单次超时(毫秒)",
+			"default": 8000,
+			"min": 1000,
+			"max": 30000,
+			"hint": "每段连接/响应超时；网络较慢时可适当调大"
+		},
+		{
+			"key": "failThreshold",
+			"type": "number",
+			"label": "连续失败几次判定为断",
+			"default": 2,
+			"min": 1,
+			"max": 5,
+			"hint": "避免网络抖动一下就报警"
+		},
+		{
+			"key": "proxy",
+			"type": "text",
+			"label": "代理地址",
+			"default": "",
+			"hint": "留空时依次读取 pi 的 httpProxy 与系统代理环境变量；支持 HTTP(S) 代理及认证 URL；未配置则测试直连"
+		},
+		{
+			"key": "targetUrl",
+			"type": "text",
+			"label": "HTTPS 探测目标",
+			"default": "https://chatgpt.com/backend-api/wham/usage",
+			"hint": "可改为你实际使用的服务；仅发送无认证 GET，不附带模型凭据"
+		},
+		{
+			"key": "controlUrl",
+			"type": "text",
+			"label": "对照站点 URL",
+			"default": "https://www.google.com/generate_204",
+			"hint": "仅在目标失败达到阈值时请求；用于区分单个目标和整体链路问题"
+		},
+		{
+			"key": "notifyOnChange",
+			"type": "boolean",
+			"label": "断连/恢复时弹通知",
+			"default": true,
+			"hint": "只在状态切换时各发一条，不会每轮刷屏"
+		},
+		{
+			"key": "showBadge",
+			"type": "boolean",
+			"label": "在底部状态栏显示",
+			"default": true,
+			"hint": "目标可达时显示 🌐，异常时显示谨慎的连通性提示"
+		}
+	]
+}

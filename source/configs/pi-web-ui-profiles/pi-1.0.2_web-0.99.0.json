@@ -1,0 +1,18 @@
+{
+	"piVersion": "1.0.2",
+	"piWebUiVersion": "0.99.0",
+	"patches": [
+		"patches/patch-pi-web-ui-plugin-live-model.js",
+		"patches/patch-pi-web-ui-plugin-per-client-conversation.js",
+		"patches/patch-pi-web-ui-topbar-menu-buttons.js",
+		"patches/patch-pi-web-ui-plugin-topbar-cache.js",
+		"patches/patch-pi-web-ui-plan-board-clear.js",
+		"patches/patch-pi-web-ui-plan-marker.js",
+		"patches/patch-pi-web-ui-goal-review.js",
+		"patches/patch-pi-invalid-toolcall-names.js",
+		"patches/patch-pi-web-ui-sw-entry-revalidate.js",
+		"patches/patch-pi-web-ui-free-models-only.js",
+		"patches/patch-pi-web-ui-free-model-badge.js"
+	],
+	"notes": "pi 1.0.2 + pi-web-ui 0.99.0（自 pi 0.87.1 + web 0.96.1 升级，升级时间 2026-10-04 11:48~11:58）。本次跨 0.97.0/0.98.0/0.99.0 三个大版本：0.98.0 是巨型改动（图标编辑/布局与 SideDock 重写、计划门禁与净室交接重构、前端死码清理 11 个 hook、插件目录 nameEn、插件更新检查改按版本号），0.99.0 又把 PlanManager 改为按持久化 sessionId 落盘 plans.json 并自动回填。适配要点：(1) 补丁锚点：topbar-cache 增加 0.98+/0.99.x 变体（ui-slots 压缩 helper 名 xi(ui(...)) → ji(bi(...))）；plan-board-clear 锚点去掉压缩变量名（l= → v=）；plan-marker 退役两处上游已覆盖的注入（快照自带 plan、PlanManager 落盘回填），保留 [[plan:...]] 标记本体与 MarkerContext.host 注入；(2) 冗余清理：per-client 补丁删除自造 sessionFile 那段 —— 0.99.0 已原生提供 sessionId / sessionFile / sessionDir / model；(3) 版本判定统一：scripts/apply-pi-web-ui-profile.js 过去只读全局 npm 目录的 pi-coding-agent（0.87.1），而检查脚本优先读自带副本（1.0.2），两份脚本各算一个版本；现已统一到 scripts/pi-web-ui-locate.js 的 packageVersion（自带优先）；(4) patch-pi-web-ui-goal-review.js 已重新适配并列入本 profile（2026-10-04 第二轮）：0.99.0 把审查提示词改名 reviewerRoundPrompt、改成中英双模板，且审查对象从「主对话自己干活」改成「委托执行者」，因此三处修复的落点全部重锚——证据采集改从执行者会话（host.getConv(execId).session）取、上一轮意见改用 runDelegatedLoop 的局部 feedback、空 feedback 兜底改在 verdict 落地处；补丁内保留 LEGACY（0.96.1 的 9 对）/MODERN（0.99.0 的 12 对）两代表，旧 profile 不受影响。pi 内核补丁 patch-pi-invalid-toolcall-names 已在新旧三份副本（自带 1.0.2 / 全局 0.87.1 / 源码 0.87.1）上全部命中。"
+}

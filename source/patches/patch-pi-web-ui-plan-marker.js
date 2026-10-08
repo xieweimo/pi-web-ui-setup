@@ -15,9 +15,7 @@ const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 
 const marker = "plan-inline-marker-v4";
 const snapshotMarker = "plan-marker-snapshot-v2";
-const restoreMarker = "plan-marker-restore-v2";
 const strictSyntaxMarker = "plan-marker-strict-syntax-v3";
-const legacyMigrationMarker = "plan-marker-legacy-status-migration-v4";
 const server = locateWebUiFile("dist", "server");
 if (!server || !fs.existsSync(server)) {
 	console.error("✗ 找不到 pi-web-ui 的 dist/server");
@@ -196,43 +194,45 @@ try {
             emit: (msg) => this.emit(msg),`,
 		"plan marker host",
 	);
-	// 页面加载/下发状态时也要能自动回填：否则重启后看板要等到下次写标记才回来。
-	replaceOne(
-		agentFile,
-		`    /** 任务计划管理器（Plan Mode / Step State Machine）。 */
-    planManager = new PlanManager();`,
-		`    /** 任务计划管理器（Plan Mode / Step State Machine）。 */
-    planManager = new PlanManager();
-    /** ${restoreMarker}：PlanManager 只在内存里，服务重启后从会话快照回填看板。 */
-    restorePlanFromSnapshot(convId) {
-        if (!convId) return null;
-        const snap = this.markerSvc?.getRawState?.(convId, "plan");
-        if (!snap || !Array.isArray(snap.steps) || snap.steps.length === 0) return null;
-        // ${legacyMigrationMarker}：早期错误写法把 =done 放进标题；恢复时一次性还原成真实状态。
-        const steps = snap.steps.map((step) => {
-            const match = /^(.+?)=(pending|in_progress|done|failed)\\s*$/i.exec(String(step.title ?? ""));
-            return match ? { ...step, title: match[1], status: match[2].toLowerCase() } : step;
-        });
-        return this.planManager.setPlan(convId, steps, snap.activeStepId ?? undefined);
-    }`,
-		"plan restore helper",
-	);
-	replaceOne(
-		agentFile,
-		`            plan: this.planManager.getPlan(this.activeId),`,
-		`            plan: this.planManager.getPlan(this.activeId) ?? this.restorePlanFromSnapshot(this.activeId), /*${restoreMarker}*/`,
-		"plan restore on snapshot",
-	);
+	// 0.99.0 起上游把计划持久化并回填都做完了：
+	//   · PlanManager 落盘 `<dataDir>/plans.json`（按持久化 sessionId 为主键，启动/载入时严格过滤易变短 ID）；
+	//   · 载入会话时 bindSession + setPlan 回填（agent-service 里 `plansBySession` 那一套）；
+	//   · 快照本身也已带 `plan: this.planManager.getPlan(this.activeId) ?? null`。
+	// 因此我们原先那两处注入（给 AgentService 加 restorePlanFromSnapshot()；在快照里把 plan
+	// 换成 `getPlan(...) ?? restorePlanFromSnapshot(...)`）**已退役**——留着只会双重回填，
+	// 而且旧锚点（`planManager = new PlanManager();`）已被构造函数赋值取代，必失效。
+	// 2026-10-04 升级适配时实测确认，详见 docs/升级适配/pi-web-ui-升级适配记录.md。
+
 	if (!bundle || !fs.existsSync(bundle)) throw new Error("找不到 web bundle");
 	let web = fs.readFileSync(bundle, "utf8");
 	const webNeedle = "markerGroupRename:`重命名标记 conv/rename`";
-	const webReplacement = "markerGroupRename:`重命名标记 conv/rename`,markerGroupPlan:`任务看板标记 plan`/*plan-inline-marker-v1*/";
-	if (!web.includes(marker)) {
+	// 幂等判据必须是【实际写进 bundle 的那串】。历史上这里用 marker（plan-inline-marker-v4）
+	// 判断、却写入 v1 标记，两者永不相等 → 每次启动都再追加一份：2026-09-29 发现 bundle 里
+	// 已累积 6 份重复键（每次 +67 字节），入口 bundle 内容变化又逼着所有客户端重下、
+	// 缓存自愈 reload 一次。现在按实际串判断，并自动折叠历史重复（自愈）。
+	const webMarker = "plan-inline-marker-v1";
+	const webUnit = ",markerGroupPlan:`任务看板标记 plan`/*" + webMarker + "*/";
+	const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const dupRe = new RegExp(escRe(webNeedle) + "(?:" + escRe(webUnit) + ")+", "g");
+	let patchedNext = web;
+	if (!web.match(dupRe)) {
 		const count = web.split(webNeedle).length - 1;
 		if (count !== 1) throw new Error(`markerGroupPlan 锚点命中 ${count} 次`);
-		fs.writeFileSync(bundle, web.replace(webNeedle, webReplacement), "utf8");
+		patchedNext = web.replace(webNeedle, webNeedle + webUnit);
+		console.log("✓ 已安装 [[plan:...]] 自动任务看板标记");
 	}
-	console.log("✓ 已安装 [[plan:...]] 自动任务看板标记");
+	else {
+		const copies = (web.match(new RegExp(escRe(webUnit), "g")) || []).length;
+		if (copies > 1) {
+			patchedNext = web.replace(dupRe, webNeedle + webUnit);
+			console.log(`✓ 已折叠重复的 [[plan:...]] 看板标记注入（${copies} → 1 份）`);
+		}
+		else {
+			console.log("✓ [[plan:...]] 自动任务看板标记已存在");
+		}
+	}
+	// 只在确有变化时写盘：内容不变还写会改 mtime，且使「补丁幂等」无从验证。
+	if (patchedNext !== web) fs.writeFileSync(bundle, patchedNext, "utf8");
 } catch (error) {
 	console.error(`✗ plan 内联标记补丁失败：${error.message}`);
 	process.exit(2);

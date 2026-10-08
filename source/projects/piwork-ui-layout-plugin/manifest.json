@@ -1,0 +1,22 @@
+{
+  "id": "piwork-ui-layout",
+  "name": "PIwork 界面布局",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "以声明式 ui.arrange 将常用宿主操作保留在顶栏；不注入 DOM、不修改宿主产物。",
+  "permissions": ["ui"],
+  "view": false,
+  "engines": {
+    "pi-web-ui": ">=0.95.0"
+  },
+  "ui": {
+    "arrange": [
+      { "id": "host:browser", "hide": false, "group": "tools", "order": 41, "align": "end" },
+      { "id": "host:sound", "hide": false, "group": "system", "order": 70, "align": "end" },
+      { "id": "host:language", "hide": false, "group": "system", "order": 80, "align": "end" },
+      { "id": "host:theme", "hide": false, "group": "system", "order": 82, "align": "end" },
+      { "id": "host:update", "hide": false, "group": "system", "order": 90, "align": "end" },
+      { "id": "host:github", "hide": false, "group": "system", "order": 200, "align": "end" }
+    ]
+  }
+}

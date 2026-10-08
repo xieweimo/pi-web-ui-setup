@@ -13,7 +13,7 @@ $repoRoot   = Split-Path $PSScriptRoot -Parent
 $workRoot   = Split-Path $repoRoot -Parent                       # C:\AIWork\PI
 $privateDir = Split-Path $workRoot -Parent                       # C:\AIWork
 $publicDir  = Join-Path $workRoot 'pi-web-ui-setup'
-$zipName    = 'PiWebUI-Setup_pi-0.87.1_web-0.95.0.zip'
+$zipName    = 'PiWebUI-Setup_pi-1.0.2_web-0.99.0.zip'
 $files      = @('install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', $zipName, 'source/docs/after-install-checklist.md', 'source/projects/piwork-tools-plugin/manifest.json')
 $rawBase    = 'https://raw.githubusercontent.com/xieweimo/pi-web-ui-setup/main'
 
@@ -83,8 +83,30 @@ function Get-Sha256Normalized([string]$Path) {
     } finally { $sha.Dispose() }
 }
 
+# 发布只提交明确列出的文件；其他项目与本机文件即使已暂存，也保留在索引中而不进入发布提交。
+$privatePaths = @('.gitignore', ('PI/PIwork/archive/' + $zipName), 'PI/PIwork/configs/pi-settings.template.json', 'PI/PIwork/configs/global-AGENTS.md', 'PI/PIwork/configs/models-store.json', 'PI/PIwork/configs/pi-web-ui-restart-descriptor.example.json', 'PI/PIwork/configs/pi-web-ui-profiles', 'PI/PIwork/docs/after-install-checklist.md', 'PI/PIwork/extras', 'PI/PIwork/projects/codex-usage-plugin', 'PI/PIwork/projects/piwork-tools-plugin', 'PI/PIwork/projects/piwork-ui-layout-plugin', 'PI/PIwork/projects/proxy-health-plugin', 'PI/PIwork/projects/reconnect-plugin', 'PI/PIwork/scripts/apply-pi-web-ui-profile.js', 'PI/PIwork/scripts/check-pi-web-ui-patches.js', 'PI/PIwork/scripts/check-codex-usage.js', 'PI/PIwork/scripts/test-workspace-layout.mjs', 'PI/PIwork/configs/README.md', 'PI/PIwork/scripts/create-portable-pi-web-ui-bundle.ps1', 'PI/PIwork/scripts/install-aiwork.ps1', 'PI/PIwork/scripts/install-plugins.js', 'PI/PIwork/scripts/pi-web-ui-locate.js', 'PI/PIwork/scripts/pi-core-locate.js', 'PI/PIwork/scripts/pi-web-ui-entry-cache-bust.js', 'PI/PIwork/scripts/pi-web-ui-launcher.ps1', 'PI/PIwork/scripts/pi-web-ui-recovery-watchdog.js', 'PI/PIwork/scripts/resolve-proxy.ps1', 'PI/PIwork/scripts/manage-plan-board.mjs', 'PI/PIwork/scripts/repair-invalid-toolcall-names.js', 'PI/PIwork/scripts/sync-pi-web-ui-setup.ps1')
+$publicPaths = @('README.md', 'install.ps1', 'install.cmd', 'uninstall.ps1', 'uninstall.cmd', '.gitignore', $zipName, 'source')
+$distributionPatches = @('patches/apply-page-picker-all-urls.js')
+foreach ($profile in Get-ChildItem (Join-Path $repoRoot 'configs\pi-web-ui-profiles') -Filter '*.json' -File) {
+    $data = Get-Content $profile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+    $distributionPatches += @($data.patches)
+}
+$distributionPatches = @($distributionPatches | Sort-Object -Unique)
+foreach ($rel in $distributionPatches) {
+    if ($rel -notmatch '^patches/[A-Za-z0-9_.-]+\.(js|ps1)$') { throw "不合法的补丁路径：$rel" }
+    if (-not (Test-Path (Join-Path $repoRoot $rel) -PathType Leaf)) { throw "缺少补丁：$rel" }
+    $privatePaths += 'PI/PIwork/' + $rel
+}
+# 已暂存的范围外内容不能靠 git commit --only 解决：它会在下一次普通提交时泄漏。
+# 发现时直接停止，让操作者单独处理，而不是擅自撤销暂存。
+$staged = @(& git -C $privateDir -c core.quotePath=false diff --cached --name-only)
+if ($LASTEXITCODE -ne 0) { throw '无法检查私有仓库暂存区' }
+$outside = @($staged | Where-Object { $name = $_; -not @($privatePaths | Where-Object { $name -eq $_ -or $name.StartsWith($_ + '/') }).Count })
+if ($outside.Count) { throw "私有仓库暂存区含 $($outside.Count) 项安装范围外文件；为防止日后误推送，先单独处理暂存区。" }
+
 Info '=== 1/5 重新打包安装包 ==='
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'create-portable-pi-web-ui-bundle.ps1')
+if ($LASTEXITCODE -ne 0) { throw "打包子进程失败（退出码 $LASTEXITCODE），禁止使用旧 zip 继续同步" }
 $zipPath = Join-Path $repoRoot "archive\$zipName"
 if (-not (Test-Path $zipPath)) { throw "打包失败：$zipPath 不存在" }
 Copy-Item $zipPath (Join-Path $publicDir $zipName) -Force
@@ -103,20 +125,40 @@ $mirror = @(
     @{ from = 'projects\codex-usage-plugin';      to = 'source\projects\codex-usage-plugin' },
     @{ from = 'projects\piwork-tools-plugin';     to = 'source\projects\piwork-tools-plugin' },
     @{ from = 'projects\reconnect-plugin';        to = 'source\projects\reconnect-plugin' },
-    @{ from = 'patches';                          to = 'source\patches' },
-    @{ from = 'configs';                          to = 'source\configs' },
-    @{ from = 'docs\after-install-checklist.md'; to = 'source\docs\after-install-checklist.md' },
-    @{ from = 'extras\page-picker-extension.zip'; to = 'source\extras\page-picker-extension.zip' },
-    @{ from = 'scripts';                          to = 'source\scripts' }
+    @{ from = 'projects\piwork-ui-layout-plugin'; to = 'source\projects\piwork-ui-layout-plugin' },
+    @{ from = 'projects\proxy-health-plugin';     to = 'source\projects\proxy-health-plugin' },
+    @{ from = 'configs\pi-settings.template.json'; to = 'source\configs\pi-settings.template.json' },
+    @{ from = 'configs\global-AGENTS.md';         to = 'source\configs\global-AGENTS.md' },
+    @{ from = 'configs\models-store.json';        to = 'source\configs\models-store.json' },
+    @{ from = 'configs\pi-web-ui-restart-descriptor.example.json'; to = 'source\configs\pi-web-ui-restart-descriptor.example.json' },
+    @{ from = 'configs\pi-web-ui-profiles';        to = 'source\configs\pi-web-ui-profiles' },
+    @{ from = 'docs\after-install-checklist.md';  to = 'source\docs\after-install-checklist.md' },
+    @{ from = 'extras\page-picker-extension.zip'; to = 'source\extras\page-picker-extension.zip' }
+)
+# 公开脚本只取安装包实际携带的脚本；不公开 scripts/ 下的其他项目或本机运维脚本。
+$mirror += @('install-aiwork.ps1','install-plugins.js','apply-pi-web-ui-profile.js','pi-web-ui-locate.js','pi-core-locate.js','pi-web-ui-entry-cache-bust.js','pi-web-ui-launcher.ps1','pi-web-ui-recovery-watchdog.js','resolve-proxy.ps1','manage-plan-board.mjs','repair-invalid-toolcall-names.js','check-pi-web-ui-patches.js') | ForEach-Object {
+    @{ from = "scripts\$_"; to = "source\scripts\$_" }
+}
+$mirror += @(
+    @{ from = 'scripts\create-portable-pi-web-ui-bundle.ps1'; to = 'source\scripts\create-portable-pi-web-ui-bundle.ps1' },
+    @{ from = 'scripts\sync-pi-web-ui-setup.ps1'; to = 'source\scripts\sync-pi-web-ui-setup.ps1' }
 )
 $srcRoot = Join-Path $publicDir 'source'
 Remove-Item $srcRoot -Recurse -Force -ErrorAction SilentlyContinue
 foreach ($m in $mirror) {
     $from = Join-Path $repoRoot $m.from
     $to = Join-Path $publicDir $m.to
-    if (-not (Test-Path $from)) { Warn ('  跳过（不存在）：' + $m.from); continue }
+    if (-not (Test-Path $from)) { throw ('镜像清单文件不存在：' + $m.from) }
     New-Item -ItemType Directory -Force -Path (Split-Path $to -Parent) | Out-Null
     Copy-Item $from $to -Recurse -Force
+}
+# 公开镜像与安装包使用同一补丁范围：历史 profile 并集 + page-picker 补丁。
+foreach ($rel in $distributionPatches) {
+    $from = Join-Path $repoRoot $rel
+    if (-not (Test-Path $from -PathType Leaf)) { throw "缺少补丁：$rel" }
+    $to = Join-Path $srcRoot $rel
+    New-Item -ItemType Directory -Force -Path (Split-Path $to -Parent) | Out-Null
+    Copy-Item $from $to -Force
 }
 # 日志/备份不入公开仓库
 Get-ChildItem $srcRoot -Recurse -File -Include *.log,*.bak -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -130,12 +172,14 @@ Info '=== 3/5 提交并推送两个仓库 ==='
 foreach ($dir in @($privateDir, $publicDir)) {
     Push-Location $dir
     try {
-        $dirty = (git status --porcelain)
-        if ($dirty) {
+        $paths = if ($dir -eq $privateDir) { $privatePaths } else { $publicPaths }
+        git add -A -- @paths | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git add 失败: $dir" }
+        $dirty = @(git diff --cached --name-only -- @paths)
+        if ($LASTEXITCODE -ne 0) { throw "git diff 失败: $dir" }
+        if ($dirty.Count) {
             $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
-            git add -A | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "git add 失败: $dir" }
-            git commit -q -m "同步 pi / pi-web-ui 定制（$stamp）" | Out-Null
+            git commit -q --only -m "同步 pi / pi-web-ui 定制（$stamp）" -- @paths | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "git commit 失败: $dir" }
             Info ("  已提交: " + (Split-Path $dir -Leaf))
         } else {

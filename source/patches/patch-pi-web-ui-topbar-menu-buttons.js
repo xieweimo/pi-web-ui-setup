@@ -21,6 +21,51 @@ function bundlePath() {
 	return hit ? path.join(dir, hit) : null;
 }
 
+/**
+ * dev 源码目标：vite(5173) 现场编译 source checkout，不读 web/dist，所以只打 bundle
+ * 对它完全无效。改 `REQUIRED_TOPBAR_ITEM_IDS` 即可 —— 该循环排在用户布局偏好之后、
+ * 分组排序之前，会把命中条目强制 `slot=topbar.primary` + `hidden=false`，足以覆盖
+ * 注册表里那 6 处 `hidden: true` 缺省，不必去动上游条目定义与注释。
+ * 失败直接退出码 2，绝不静默跳过（否则又变成“生产有、5173 没有”）。
+ */
+function patchDevSource() {
+	const src = path.join(path.resolve(__dirname, ".."), "projects", "pi-web-ui-source", "web", "src", "ui-slots.ts");
+	if (!fs.existsSync(src)) {
+		console.log("· 未找到 source checkout，跳过 dev 源码补丁");
+		return;
+	}
+	const raw = fs.readFileSync(src, "utf8");
+	if (raw.includes(marker)) {
+		console.log("✓ 原生菜单项顶栏按钮补丁已存在（dev 源码 ui-slots.ts）");
+		return;
+	}
+	const needle = `export const REQUIRED_TOPBAR_ITEM_IDS: ReadonlySet<string> = new Set(["host:settings"]);`;
+	const replacement = `export const REQUIRED_TOPBAR_ITEM_IDS: ReadonlySet<string> = new Set([
+	"host:settings",
+	// ${marker}：上游缺省 hidden:true 把这六项收进「⋯」菜单，本项目要求它们直接显示在顶栏
+	//（与生产 bundle 补丁同语义）。
+	"host:browser",
+	"host:sound",
+	"host:language",
+	"host:theme",
+	"host:update",
+	"host:github",
+]);`;
+	// 源码是 CRLF（上游仓库检出）：按 LF 匹配，写回时还原原行尾。
+	const crlf = raw.includes("\r\n");
+	const text = crlf ? raw.replace(/\r\n/g, "\n") : raw;
+	const hits = text.split(needle).length - 1;
+	if (hits !== 1) {
+		console.error(`✗ dev 源码固定项锚点命中 ${hits} 次，拒绝模糊替换（上游可能改了该常量）`);
+		process.exit(2);
+	}
+	const patched = text.replace(needle, replacement);
+	fs.writeFileSync(src, crlf ? patched.replace(/\n/g, "\r\n") : patched, "utf8");
+	console.log("✓ 已把六项加进顶栏常驻集合（dev 源码 ui-slots.ts，vite 热更新即时生效）");
+}
+
+patchDevSource();
+
 const target = bundlePath();
 if (!target) {
 	console.error("✗ 找不到 pi-web-ui 的 web/dist/assets/index-*.js");
@@ -42,7 +87,7 @@ const replacement =
 
 // 固定项集合的变量名会被压缩重命名（0.92.0 是 `$n`，0.94.1 是 `fr`），
 // 所以这里只认结构不认名字：<var>=new Set([`host:settings`]);
-const pinnedRe = /([A-Za-z_$][\w$]*)=new Set\(\[`host:settings`\]\);/g;
+const pinnedRe = /([A-Za-z_$][\w$]*)=new Set\(\[`host:settings`([^\]]*)\]\)/g;
 const pinnedHits = [...source.matchAll(pinnedRe)];
 const count = source.split(needle).length - 1;
 if (count !== 1 || pinnedHits.length !== 1) {
@@ -54,7 +99,9 @@ if (count !== 1 || pinnedHits.length !== 1) {
 
 source = source
 	.replace(needle, replacement)
-	.replace(pinnedRe, "$1=new Set([`host:settings`,`host:browser`,`host:sound`,`host:language`,`host:theme`,`host:update`,`host:github`]);");
+	// 用函数形式：`$2` 是上游原本就有的项（0.96.1 是 `,`host:history`,`host:files``），必须原样保留；
+	// 末尾**不加** `;` —— 0.96.1 里它是 `ti=...(...),ni=...` 逗号分隔声明，多一个分号就是语法错误。
+	.replace(pinnedRe, (_m, varName, rest) => `${varName}=new Set([\`host:settings\`${rest},\`host:browser\`,\`host:sound\`,\`host:language\`,\`host:theme\`,\`host:update\`,\`host:github\`])`);
 fs.writeFileSync(target, source, "utf8");
 console.log("✓ 已将运行位置、声音、语言、主题、版本和 GitHub 恢复为顶部独立按钮");
 console.log(`  目标：${target}`);

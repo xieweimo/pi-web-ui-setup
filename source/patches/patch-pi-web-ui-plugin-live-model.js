@@ -2,19 +2,22 @@
 /**
  * 让 pi-web-ui 插件在模型切换完成时立即感知当前选中模型。
  *
- * 1) getActiveConversation() 增加 activeModel（当前 session 的模型，非最后历史消息）；
- * 2) AgentService.setModel() 成功后立即通知插件刷新。
+ * 只做一件事：AgentService.setModel() 成功后立即通知插件刷新
+ * （0.99.0 的 host.models 仍只有 list()，没有变更事件）。
+ *
+ * 早期那半「往快照注入 activeModel」已**退役**：
+ *   - 0.94.1 起快照本来就带 canonical `model` 字段；
+ *   - 0.99.0 更是把它作为原生字段 `model: modelId` 直接给出（见 server/agent-service.js
+ *     的 readConversationForPlugins 返回值），插件侧 pickModel() 也优先读 `conv.model`。
+ *   再注入一个同义字段只会造重复键，见 docs/升级适配/pi-web-ui-升级适配记录.md。
  *
  * 幂等，启动器会在服务启动前自动执行；源码版本不匹配时退出码 2，且不阻断服务。
  */
 const fs = require("fs");
-const path = require("path");
 const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
 
 const target = locateWebUiFile("dist", "server", "agent-service.js");
 const marker = "plugin-live-model-patch";
-const conversationNeedle = `                isStreaming: target.session.isStreaming,\n                messages: this.messagesOf(target),`;
-const conversationReplacement = `                isStreaming: target.session.isStreaming,\n                // ${marker}: 当前选择，不能用最后一条历史 assistant 消息代替。\n                activeModel: state.model\n                    ? { provider: state.model.provider ?? null, model: state.model.id ?? null }\n                    : null,\n                messages: this.messagesOf(target),`;
 const setModelVariants = [
   {
     name: "0.90.x",
@@ -38,11 +41,10 @@ if (source.includes(marker)) {
   process.exit(0);
 }
 const matched = setModelVariants.filter((v) => source.split(v.needle).length - 1 === 1);
-if (!source.includes(conversationNeedle) || matched.length !== 1) {
+if (matched.length !== 1) {
   console.error(`pi-web-ui source changed; live-model patch not applied (setModel variants: ${matched.length})`);
   process.exit(2);
 }
-const variant = matched[0];
-source = source.replace(conversationNeedle, conversationReplacement).replace(variant.needle, variant.replacement);
+source = source.replace(matched[0].needle, matched[0].replacement);
 fs.writeFileSync(target, source, "utf8");
-console.log("live-model patch applied");
+console.log(`live-model patch applied (variant ${matched[0].name})`);

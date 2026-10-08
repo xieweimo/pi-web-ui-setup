@@ -1,0 +1,18 @@
+{
+  "piVersion": "0.87.1",
+  "piWebUiVersion": "0.96.1",
+  "patches": [
+    "patches/patch-pi-web-ui-plugin-live-model.js",
+    "patches/patch-pi-web-ui-plugin-per-client-conversation.js",
+    "patches/patch-pi-web-ui-topbar-menu-buttons.js",
+    "patches/patch-pi-web-ui-plugin-topbar-cache.js",
+    "patches/patch-pi-web-ui-plan-board-clear.js",
+    "patches/patch-pi-web-ui-plan-marker.js",
+    "patches/patch-pi-invalid-toolcall-names.js",
+    "patches/patch-pi-web-ui-sw-entry-revalidate.js",
+    "patches/patch-pi-web-ui-free-models-only.js",
+    "patches/patch-pi-web-ui-free-model-badge.js",
+    "patches/patch-pi-web-ui-goal-review.js"
+  ],
+  "notes": "pi 0.87.1 + pi-web-ui 0.96.1（自 0.95.0 升级）。本次升级关键变更：0.96.0 的「悬空工具调用修复收紧分支与上线检查（#332）」已在上游 dist/server/dangling-tools.js 内建 export function tailAssistantToolCallIds（守卫比本项目补丁更严：除跳过 error/aborted 的 assistant 外，遇到 user 消息也立即停止回溯），因此 patch-pi-web-ui-dangling-tool-calls.js 正式退役，不再列入本 profile；脚本保留的唯一职责是检测到上游内建时清除历史注入的残留块（残留会造成同名函数重复声明，服务端 bundle 直接 SyntaxError、服务起不来，2026-09-29 实际故障）。当前 profile 共 10 项补丁：plugin-live-model、plugin-per-client-conversation、topbar-menu-buttons、plugin-topbar-cache、plan-board-clear、plan-marker、invalid-toolcall-names（唯一改 pi 内核产物的补丁）、sw-entry-revalidate、free-models-only、free-model-badge、goal-review（2026-09-29 新增）。quick-phrase-queue 继续只执行 --remove（清除旧 ⏳ 注入与旧 SW 缓存），不列入现役补丁；usage-cost、hide-forked-sessions、permanent-project-ignore、recovery-ui 继续退役。apply-stop-button.ps1 自 0.95.0 起退役。pi 0.87.0 的破坏性变更（shouldStopAfterTurn 移除、ContextEditEntry、SessionManager canonical context、TurnEndEvent/AgentBeforeSettleEvent）已检索：PIwork 插件不直接使用这些 SDK 接口。0.96.x 的其余变更（LSP 四个语义动作、核心工具独立开关、内置主题、消息气泡菜单/TTS、插件安装审批弹窗层级、顶栏居中修复、设置保存回执时序、微信通道插件修复）均为上游自带能力，未与本项目补丁冲突。2026-09-29 新增第 11 项补丁 patch-pi-web-ui-goal-review.js：目标审查机制三处修复——① 空 feedback 兜底（导出纯函数 ensureReviewerFeedback：优先沿用上一轮意见，否则给可执行说明，不再把「请根据以上意见修改」加空意见发给 Agent）；② 审查输入新增自动采集的「工具/命令执行证据」（bashExecution / toolResult / toolCall 摘要）与可选证据目录 docs/goal-evidence/*.md，让远程部署证据（systemctl / SHOW TABLES / SSH 输出）能进入审查者视野；③ reviewerPrompt 内置强制判定粒度（只判本轮声称完成的条目、未声称的后续阶段不构成 fail、忽略与目标无关的本地改动、无证据的声称必须 fail、feedback 禁止为空）。起因：m720q 部署类目标连烧 24 轮全 fail。该补丁只改 dist/server/goal-service.js，属服务端产物，需重启服务才生效。"
+}

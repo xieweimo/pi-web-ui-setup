@@ -18,7 +18,7 @@ const VIEW_ID = "plugin:codex-usage";
  * 用来回答“这页面到底跑的是哪一版插件前端”——宿主重启后 epoch 从 0 重来、
  * 页面自动重新 import 插件前端，光看界面是分不出来的。
  */
-const CLIENT_BUILD = "per-client-alignment-1";
+const CLIENT_BUILD = "model-cost-split-1";
 
 function esc(s) {
 	return String(s ?? "").replace(
@@ -425,7 +425,7 @@ export default {
 		}
 
 		function billingAmount(row) {
-			if (row.mode === "subscription") return `目录价 ¥${money(row.theoreticalCny)}（订阅已排除）`;
+			if (row.mode === "subscription") return `订阅（不计费；目录价 ¥${money(row.theoreticalCny)} 已排除）`;
 			if (row.mode === "free") return `目录价 ¥${money(row.theoreticalCny)}（免费，不计费）`;
 			if (row.mode === "prepaid") return `积分消耗估算 ¥${money(row.cny)}`;
 			if (row.mode === "unknown") return `未确认目录价 ¥${money(row.cny)}`;
@@ -433,19 +433,38 @@ export default {
 			return `成本估算 ¥${money(row.cny)} · $${money(row.usd, 4)}`;
 		}
 
+		function renderModelRow(model) {
+			const calls = Number(model.calls) || 0;
+			const tokens = Number(model.tokens) || 0;
+			const effective = Number.isFinite(Number(model.usdPerMillionTokens)) ? `$${money(model.usdPerMillionTokens, 4)} / 1M token` : "token 不足，无法算单价";
+			const source = [
+				model.usageCostCalls ? `响应成本 ${model.usageCostCalls} 次` : "",
+				model.officialPriceCalls ? `官方牌价回退 ${model.officialPriceCalls} 次` : "",
+				model.missingCostMessages ? `缺成本 ${model.missingCostMessages} 次` : "",
+			]
+				.filter(Boolean)
+				.join(" · ");
+			return `<div class="cu-sub" style="margin:5px 0 0 12px;padding:5px 0 0;border-top:1px dashed rgba(127,127,127,.18)">
+				<div style="display:flex;justify-content:space-between;gap:12px"><span>↳ ${esc(model.model || "unknown")}</span><span>${esc(billingAmount(model))}</span></div>
+				<div style="opacity:.72">${esc(calls)} 次调用 · 输入 ${esc(Number(model.inputTokens) || 0)} · 输出 ${esc(Number(model.outputTokens) || 0)} · 平均 $${esc(money(model.avgUsdPerCall, 5))}/次 · ${esc(effective)}</div>
+				${source ? `<div style="opacity:.62">金额来源：${esc(source)}</div>` : ""}
+			</div>`;
+		}
+
 		function renderProviderBreakdown(s) {
 			const rows = Array.isArray(s.providers) ? s.providers : [];
 			if (!rows.length) return "";
 			return `<div class="cu-card" style="margin-top:10px">
-				<div class="cu-k"><span>本会话 Provider 明细</span><span>${s.costSource === "session-ledger" ? "完整会话账本" : "当前上下文回退"}</span></div>
+				<div class="cu-k"><span>本会话 Provider / 模型明细</span><span>${s.costSource === "session-ledger" ? "完整会话账本" : "当前上下文回退"}</span></div>
 				${rows
 					.map((row) => {
 						const detail = [row.billingLabel && row.billingLabel !== row.provider ? row.billingLabel : "", row.billingNote || "", row.baseUrl || ""]
 							.filter(Boolean)
 							.join(" · ");
-						return `<div class="cu-sub" style="padding:4px 0;border-bottom:1px solid rgba(127,127,127,.12)">
+						return `<div class="cu-sub" style="padding:6px 0;border-bottom:1px solid rgba(127,127,127,.12)">
 							<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(row.provider)} · ${esc(billingLabel(row.mode))}</span><span>${esc(billingAmount(row))}</span></div>
 							${detail ? `<div style="opacity:.7">${esc(detail)} · 识别 ${esc(row.billingConfidence || "low")}</div>` : ""}
+							${(Array.isArray(row.models) ? row.models : []).map(renderModelRow).join("")}
 						</div>`;
 					})
 					.join("")}
@@ -485,13 +504,25 @@ export default {
 			const missing = Number(s.missingCostMessages) || 0;
 			const auxiliary = Number(s.auxiliaryCalls) || 0;
 			const fullLedger = s.costSource === "session-ledger";
+			const providerRows = Array.isArray(s.providers) ? s.providers : [];
+			const split = providerRows
+				.filter((row) => !["subscription", "free"].includes(row.mode) && Number(row.usd || row.cny) !== 0)
+				.map((row) => `${row.provider} ¥${money(row.cny)}`)
+				.join(" · ");
+			const curProvider = providerRows.find((row) => row.provider === s.model?.provider);
+			const curModel = (Array.isArray(curProvider?.models) ? curProvider.models : []).find((row) => row.model === s.model?.model);
+			const curLine = curModel
+				? `<div class="cu-sub">当前模型 ${esc(s.model.provider)}/${esc(s.model.model)}：${curModel.mode === "free" ? "免费（不计费）" : `¥${money(curModel.cny)} · ${esc(curModel.calls)} 次调用`}</div>`
+				: "";
 			return `
 	<div class="cu-card">
-		<div class="cu-k"><span>本会话实际 / 估算按量成本</span><span>${fullLedger ? "完整会话账本" : "当前上下文回退"}</span></div>
+		<div class="cu-k"><span>本会话 API 按量总计（全部 Provider 合计）</span><span>${fullLedger ? "完整会话账本" : "当前上下文回退"}</span></div>
 		<div class="cu-big">¥${esc(money(s.cny))}</div>
+		${split ? `<div class="cu-sub">按 Provider：${esc(split)}</div>` : ""}
 		<div class="cu-sub">≈ $${esc(money(s.usd, 4))} · 1 USD = ${esc(s.rate)} CNY · 汇率时间 ${esc(fmtTime(s.rateAt))}${
 			s.rateError ? ` · 抓取失败：${esc(s.rateError)}` : ""
 		}</div>
+		${curLine}
 		<div class="cu-sub">已纳入 ${esc(s.meteredMessages)} 次按量/积分调用${
 			auxiliary ? ` · ${esc(auxiliary)} 次压缩/摘要调用` : ""
 		} · 已排除 ${esc(excluded)} 次订阅调用${missing ? ` · ${esc(missing)} 次调用缺少成本字段` : ""}</div>
@@ -515,6 +546,7 @@ export default {
 			const bits = [];
 			if (!myStateAligned) {
 				bits.push("⚠ 这份数据还不是本页面会话的（宿主重启后活动对话被重置）——正在重新对齐，已保留上一次对齐的数值");
+				bits.push("多标签/并行对话/子代理需要宿主补丁（插件目录 host-patch/README.md，一条命令）；不打也能用，只是这些页面显示“同步中…”而不给错数字");
 			}
 			if (s.plan) bits.push(`套餐：${s.plan}`);
 			if (s.model?.provider) bits.push(`模型：${s.model.provider}${s.model.model ? ` / ${s.model.model}` : ""}`);
