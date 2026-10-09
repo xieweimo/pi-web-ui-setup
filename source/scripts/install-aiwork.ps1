@@ -50,21 +50,19 @@ foreach ($seed in $seedFiles) {
 node (Join-Path $root 'scripts\install-plugins.js')
 if ($LASTEXITCODE -ne 0) { throw "插件安装失败（退出码 $LASTEXITCODE）" }
 
-# 浏览器扩展 page-picker：解压到安装目录并预先打好「全站放行」补丁。
+# 浏览器扩展 page-picker：分发 ZIP 已由源码构建全站模式，直接解压到安装目录。
 # 扩展活在浏览器里，安装脚本只能准备好文件，实际加载要在 edge://extensions 里手动点
 # 「加载解压缩的扩展」（步骤写在下面的桌面清单里）。
 $extZip = Join-Path $root 'extras\page-picker-extension.zip'
 $extDir = Join-Path $root 'page-picker-extension'
-$extPatch = Join-Path $root 'patches\apply-page-picker-all-urls.js'
 if (Test-Path $extZip) {
     Remove-Item $extDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $extDir | Out-Null
     Expand-Archive -Force $extZip $extDir
-    if (Test-Path $extPatch) {
-        & node $extPatch --dir $extDir | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "page-picker 扩展准备失败（退出码 $LASTEXITCODE）" }
+    if (-not (Test-Path (Join-Path $extDir 'manifest.json')) -or -not (Test-Path (Join-Path $extDir 'dist\background.js'))) {
+        throw 'page-picker 扩展包不完整（缺 manifest.json 或 dist\background.js）'
     }
-    Write-Host ('  page-picker 扩展已就绪（含全站放行补丁）：' + $extDir)
+    Write-Host ('  page-picker 扩展已就绪（源码内置全站模式）：' + $extDir)
 } else {
     Write-Host '  未找到 extras\page-picker-extension.zip，跳过浏览器扩展准备'
 }

@@ -90,7 +90,7 @@ $publicPaths = @('README.md', 'install.ps1', 'install.cmd', 'uninstall.ps1', 'un
 $trackedZips = @(& git -C $publicDir ls-files -- 'PiWebUI-Setup_pi-*_web-*.zip')
 if ($LASTEXITCODE -ne 0) { throw '无法检查公开仓库已跟踪的安装包' }
 $publicPaths += @($trackedZips | Where-Object { $_ -ne $zipName -and $_ -match '^PiWebUI-Setup_pi-[0-9A-Za-z.]+_web-[0-9A-Za-z.]+\.zip$' })
-$distributionPatches = @('patches/apply-page-picker-all-urls.js')
+$distributionPatches = @()
 foreach ($profile in Get-ChildItem (Join-Path $repoRoot 'configs\pi-web-ui-profiles') -Filter '*.json' -File) {
     $data = Get-Content $profile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
     $distributionPatches += @($data.patches)
@@ -161,7 +161,7 @@ foreach ($m in $mirror) {
     New-Item -ItemType Directory -Force -Path (Split-Path $to -Parent) | Out-Null
     Copy-Item $from $to -Recurse -Force
 }
-# 公开镜像与安装包使用同一补丁范围：历史 profile 并集 + page-picker 补丁。
+# 公开镜像与安装包使用同一补丁范围：历史 profile 并集（扩展全站模式已在 ZIP 内）。
 foreach ($rel in $distributionPatches) {
     $from = Join-Path $repoRoot $rel
     if (-not (Test-Path $from -PathType Leaf)) { throw "缺少补丁：$rel" }

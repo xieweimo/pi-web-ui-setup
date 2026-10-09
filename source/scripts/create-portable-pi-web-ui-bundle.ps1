@@ -17,8 +17,8 @@ foreach ($item in $items) {
   New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
   Copy-Item $source $target -Recurse -Force
 }
-# 仅打包所有版本 profile 实际需要的补丁，以及扩展安装补丁；不把设备补丁/上游草稿整目录带出。
-$patches = @('patches/apply-page-picker-all-urls.js')
+# 仅打包所有版本 profile 实际需要的补丁；扩展 ZIP 已内置全站模式，不再携带退役补丁。
+$patches = @()
 foreach ($profile in Get-ChildItem (Join-Path $root 'configs\pi-web-ui-profiles') -Filter '*.json' -File) {
   $data = Get-Content $profile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
   $patches += @($data.patches)
