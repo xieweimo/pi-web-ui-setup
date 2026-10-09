@@ -94,6 +94,14 @@ const MARKERS = {
 		file: "server",
 		marker: ["piwork-prompt-snapshot-budget-v1", "piwork-prompt-snapshot-lock-cleanup-v2", "piwork-prompt-snapshot-lock-retry-v3", "AbortSignal.timeout(750)", "gitDirOf(cwd, signal)", "runGit(cwd, [\"add\", \"-A\"], env, signal)"],
 	},
+	"patch-pi-web-ui-session-ready-send.js": {
+		file: "web",
+		marker: ["piwork-session-ready-send-v1", "piwork-session-ready-send-v2", "sessionReady:t.status===`open`&&e.sessionReady", "da({ready:e.ready&&e.sessionReady", "e.type===`new_chat`&&t({type:`session_initializing`})"],
+	},
+	"patch-pi-web-ui-page-call-browser-sinks.js": {
+		file: "server",
+		marker: ["piwork-page-call-browser-sinks-v1", "this.browserSinks.size === 0", "cs.attachSink(send, !AgentService.isPseudoClientId(clientId))"],
+	},
 	// 免费模型绿色「免费」徽标：就地改前端入口 bundle（改完需刷入口缓存，见 entry cache bust）。
 	"patch-pi-web-ui-free-model-badge.js": { file: "web", marker: "free-model-badge-v1" },
 	// 微信通道插件不在 pi-web-ui 的 npm 包目录中，需单独检查其已安装入口。

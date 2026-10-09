@@ -99,6 +99,10 @@ $freeModelBadgePatch = Join-Path $cwd 'patches\patch-pi-web-ui-free-model-badge.
 $goalReviewPatch = Join-Path $cwd 'patches\patch-pi-web-ui-goal-review.js'
 # 大仓库发送前快照最多占用 750ms，超时取消 Git 子进程后照常入列。
 $promptSnapshotBudgetPatch = Join-Path $cwd 'patches\patch-pi-web-ui-prompt-snapshot-budget.js'
+# 连接 ready 早于会话 attach：收到当前连接的快照后才允许发送，避免冷启动消息无反馈。
+$sessionReadySendPatch = Join-Path $cwd 'patches\patch-pi-web-ui-session-ready-send.js'
+# page-picker 只向真实浏览器 socket 派发请求，伪客户端空 sink 不算页面在线。
+$pageCallBrowserSinksPatch = Join-Path $cwd 'patches\patch-pi-web-ui-page-call-browser-sinks.js'
 $danglingToolCallsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-dangling-tool-calls.js'
 $recoveryWatchdog = Join-Path $cwd 'scripts\pi-web-ui-recovery-watchdog.js'
 $pluginInstaller = Join-Path $cwd 'scripts\install-plugins.js'
@@ -118,7 +122,7 @@ $planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
 $failedPatches = @()
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch, $promptSnapshotBudgetPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch, $promptSnapshotBudgetPatch, $sessionReadySendPatch, $pageCallBrowserSinksPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) {
         & node $patch | Out-Null
         # 任何非零都算失败：2 = 锚点失效，1 = 未捕获异常（如 IO/权限），同样不能静默启服。
