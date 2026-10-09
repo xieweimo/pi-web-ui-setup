@@ -90,6 +90,10 @@ const MARKERS = {
 	},
 	// 模型可见性：服务端只下发免费/订阅/白名单模型，并给每项带 free 字段。
 	"patch-pi-web-ui-free-models-only.js": { file: "server", marker: "free-models-only-v2" },
+	"patch-pi-web-ui-prompt-snapshot-budget.js": {
+		file: "server",
+		marker: ["piwork-prompt-snapshot-budget-v1", "piwork-prompt-snapshot-lock-cleanup-v2", "piwork-prompt-snapshot-lock-retry-v3", "AbortSignal.timeout(750)", "gitDirOf(cwd, signal)", "runGit(cwd, [\"add\", \"-A\"], env, signal)"],
+	},
 	// 免费模型绿色「免费」徽标：就地改前端入口 bundle（改完需刷入口缓存，见 entry cache bust）。
 	"patch-pi-web-ui-free-model-badge.js": { file: "web", marker: "free-model-badge-v1" },
 	// 微信通道插件不在 pi-web-ui 的 npm 包目录中，需单独检查其已安装入口。
