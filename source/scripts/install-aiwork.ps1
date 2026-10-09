@@ -3,7 +3,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $templateFile = Join-Path $root 'configs\pi-settings.template.json'
 $agentDir = Join-Path $env:USERPROFILE '.pi\agent'
-if (-not $SkipNpmInstall) { npm install -g '@earendil-works/pi-coding-agent@1.0.2' 'pi-web-ui@0.99.0' }
+if (-not $SkipNpmInstall) {
+    npm install -g '@earendil-works/pi-coding-agent@1.0.2' 'pi-web-ui@0.99.0'
+    if ($LASTEXITCODE -ne 0) { throw "npm install 失败（退出码 $LASTEXITCODE）" }
+}
 if (-not (Get-Command pi -ErrorAction SilentlyContinue) -or -not (Get-Command pi-web-ui -ErrorAction SilentlyContinue)) { throw 'pi or pi-web-ui was not found.' }
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
 $template = Get-Content $templateFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -45,6 +48,7 @@ foreach ($seed in $seedFiles) {
 # 界面插件（codex-usage 额度/成本、piwork-tools 同步、reconnect 重连）：拷进 <dataDir>/plugins/，
 # 与 pi-web-ui 包目录分离，npm 升级不会动它们。
 node (Join-Path $root 'scripts\install-plugins.js')
+if ($LASTEXITCODE -ne 0) { throw "插件安装失败（退出码 $LASTEXITCODE）" }
 
 # 浏览器扩展 page-picker：解压到安装目录并预先打好「全站放行」补丁。
 # 扩展活在浏览器里，安装脚本只能准备好文件，实际加载要在 edge://extensions 里手动点
@@ -58,12 +62,14 @@ if (Test-Path $extZip) {
     Expand-Archive -Force $extZip $extDir
     if (Test-Path $extPatch) {
         & node $extPatch --dir $extDir | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "page-picker 扩展准备失败（退出码 $LASTEXITCODE）" }
     }
     Write-Host ('  page-picker 扩展已就绪（含全站放行补丁）：' + $extDir)
 } else {
     Write-Host '  未找到 extras\page-picker-extension.zip，跳过浏览器扩展准备'
 }
 node (Join-Path $root 'scripts\apply-pi-web-ui-profile.js')
+if ($LASTEXITCODE -ne 0) { throw "pi-web-ui 补丁应用失败（退出码 $LASTEXITCODE）" }
 $launcher = Join-Path $root 'scripts\pi-web-ui-launcher.ps1'
 $desktop = [Environment]::GetFolderPath('Desktop')
 if (-not $desktop) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }

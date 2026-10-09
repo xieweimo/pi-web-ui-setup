@@ -197,6 +197,7 @@ foreach ($sub in @('configs', 'patches', 'projects', 'scripts')) {
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 Expand-Archive -Force $zip $root
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install-aiwork.ps1') -SkipNpmInstall
+if ($LASTEXITCODE -ne 0) { throw "Customization install failed (exit code $LASTEXITCODE)." }
 
 Write-Host ''
 Write-Host 'Done. Use the "Pi Web UI" shortcut on your Desktop.' -ForegroundColor Green

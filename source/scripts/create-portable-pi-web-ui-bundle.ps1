@@ -32,6 +32,34 @@ foreach ($rel in ($patches | Sort-Object -Unique)) {
   Copy-Item $source $target -Force
 }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $candidate -Force
+# 在替换正式包之前逐项核对压缩内容，防止同步时把旧补丁或漏项包发布出去。
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($candidate)
+try {
+  $required = @($items + ($patches | Sort-Object -Unique))
+  foreach ($rel in $required) {
+    $source = Join-Path $root $rel
+    if (Test-Path $source -PathType Container) {
+      $files = Get-ChildItem $source -Recurse -File
+    } else {
+      $files = @(Get-Item $source)
+    }
+    foreach ($file in $files) {
+      $name = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+      $entry = $archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $name } | Select-Object -First 1
+      if (-not $entry) { throw "安装包缺少文件：$name" }
+      $stream = $entry.Open()
+      try {
+        $hash = [System.Security.Cryptography.SHA256]::Create()
+        try { $entryHash = [BitConverter]::ToString($hash.ComputeHash($stream)) }
+        finally { $hash.Dispose() }
+      } finally { $stream.Dispose() }
+      $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+      $entryHash = $entryHash.Replace('-', '')
+      if ($entryHash -ne $sourceHash) { throw "安装包与源码不一致：$name" }
+    }
+  }
+} finally { $archive.Dispose() }
 if (Test-Path $zip) {
   [System.IO.File]::Replace($candidate, $zip, $backup)
 } else {
