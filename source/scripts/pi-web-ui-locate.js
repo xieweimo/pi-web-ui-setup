@@ -52,9 +52,15 @@ function locateWebUiFile(...rel) {
  */
 function packageVersion(name) {
 	const root = findWebUiRoot();
+	if (!root) return null;
+	const parts = name.split("/");
 	const candidates = [
-		path.join(root || "", "node_modules", ...name.split("/"), "package.json"),
-		path.join(process.env.APPDATA || "", "npm", "node_modules", ...name.split("/"), "package.json"),
+		// pi-web-ui 自身不在自己的 node_modules 里。
+		...(name === "pi-web-ui" ? [path.join(root, "package.json")] : []),
+		path.join(root, "node_modules", ...parts, "package.json"),
+		// npm 可能把 pi 提升到与 pi-web-ui 同级；便携 Node 的前缀不是 %APPDATA%/npm。
+		path.join(path.dirname(root), ...parts, "package.json"),
+		path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "npm", "node_modules", ...parts, "package.json"),
 	];
 	for (const c of candidates) {
 		try {

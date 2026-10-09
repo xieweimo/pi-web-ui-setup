@@ -22,7 +22,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { findWebUiRoot } = require("./pi-web-ui-locate.js");
+const { findWebUiRoot, packageVersion } = require("./pi-web-ui-locate.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const QUIET = process.argv.includes("--quiet");
@@ -134,20 +134,6 @@ function readJson(p) {
 	}
 }
 
-/** 读某个包的版本号：包可能在 pi-web-ui 自己的 node_modules 下（bundled），也可能在全局 npm 目录。 */
-function packageVersion(name) {
-	const webRoot = findWebUiRoot();
-	const candidates = [
-		path.join(webRoot || "", "node_modules", ...name.split("/"), "package.json"),
-		path.join(process.env.APPDATA || "", "npm", "node_modules", ...name.split("/"), "package.json"),
-	];
-	for (const c of candidates) {
-		const j = readJson(c);
-		if (j?.version) return j.version;
-	}
-	return null;
-}
-
 function webFile(kind) {
 	const webRoot = findWebUiRoot();
 	if (!webRoot) return null;
@@ -214,7 +200,7 @@ if (!webRoot) {
 	console.error("✗ 找不到 pi-web-ui 安装目录（便携 install.json 与 npm 全局目录都没有）");
 	process.exit(2);
 }
-const webVer = readJson(path.join(webRoot, "package.json"))?.version ?? null;
+const webVer = packageVersion("pi-web-ui");
 const piVer = packageVersion("@earendil-works/pi-coding-agent");
 if (!webVer || !piVer) {
 	console.error(`✗ 版本识别失败：pi-web-ui=${webVer} pi=${piVer}`);
