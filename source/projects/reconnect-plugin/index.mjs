@@ -55,7 +55,7 @@ export default {
 				ok: true,
 				// 当前插件路由能响应，说明后端在线；watchdog 的 healthUrl 可能检查的是 Vite 前端。
 				backendOnline: true,
-				watchdog: probe.status !== 0,
+				watchdog: probe.ok === true && typeof probe.phase === "string",
 				watchdogStatus: probe.status,
 				watchdogError: probe.error ?? null,
 				watchdogPort: probe.watchdogPort || WATCHDOG_PORT,

@@ -21,6 +21,8 @@
 
 正式版通常只有一个网页服务，因此只生成一个服务卡片；开发版分别登记 `frontend` 和 `backend`。以后 descriptor 增加其他服务，界面会自动增加对应卡片。
 
+状态区分别显示服务状态与 watchdog 探活结果：后端 `/state` 只有成功读取守护 `/state` 才标「已就绪」；不可达时提示「重启守护未运行」、禁用重启按钮，仍可用「刷新并重新连接」。浏览器直连守护失败会提示端口与启动器，不再透传 `Failed to fetch`。操作轮询连续三次断线或等待超过 120 秒会退出并解除按钮的忙碌状态；超时不代表操作失败，需刷新状态核实结果。
+
 ## 多服务 restart descriptor
 
 示例见 `configs/pi-web-ui-restart-descriptor.example.json`。主要结构：

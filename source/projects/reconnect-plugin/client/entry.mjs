@@ -9,11 +9,44 @@ async function api(path, method = "GET") {
 	if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
 	return data;
 }
-async function watchdog(port, path, method = "GET") {
-	const res = await fetch(`http://127.0.0.1:${port}${path}`, { method });
+const WATCHDOG_TIMEOUT_MS = 3000;
+const OPERATION_TIMEOUT_MS = 120000;
+const WATCHDOG_DISCONNECTED = "重启守护已断开，操作结果未知。请检查守护进程后刷新状态。";
+
+export async function watchdog(port, path, method = "GET") {
+	let res;
+	try {
+		res = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal: AbortSignal.timeout(WATCHDOG_TIMEOUT_MS) });
+	} catch {
+		throw new Error(`重启守护未运行或无法连接（127.0.0.1:${port}）。请先运行 pi-web-ui 启动器，或检查浏览器是否阻止了本地连接。`);
+	}
 	const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
-	if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+	if (!res.ok || data.ok === false) throw new Error(data.error || `重启守护返回 HTTP ${res.status}`);
 	return data;
+}
+
+/** 操作中 watchdog 可能退出；连续断线或超时必须结束等待。 */
+export async function pollOperation({ port, onState, fetchState = watchdog, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now, timeoutMs = OPERATION_TIMEOUT_MS, intervalMs = 500 }) {
+	const deadline = now() + timeoutMs;
+	let failures = 0;
+	for (;;) {
+		if (now() >= deadline) throw new Error("等待重启守护超过 120 秒，操作结果未知。请刷新状态后再试。");
+		await delay(intervalMs);
+		if (now() >= deadline) throw new Error("等待重启守护超过 120 秒，操作结果未知。请刷新状态后再试。");
+		try {
+			const next = await fetchState(port, "/state");
+			if (typeof next?.phase !== "string") throw new Error("重启守护状态响应无效");
+			failures = 0;
+			onState(next);
+			if (!next.operation) return next;
+		} catch (error) {
+			if (++failures >= 3) throw new Error(WATCHDOG_DISCONNECTED, { cause: error });
+		}
+	}
+}
+
+function phaseText(phase) {
+	return ({ healthy: "运行正常", partial: "部分服务运行", stopped: "已停止", failed: "异常退出", starting: "启动中", unowned: "非本守护管理" })[phase] || (phase?.includes(":") ? "操作中" : "未知");
 }
 function safeId(value) {
 	return String(value).replace(/[^A-Za-z0-9._-]/g, "");
@@ -151,6 +184,8 @@ export default {
 		let watchdogPort = 8790;
 		let state = null;
 		let busy = false;
+		let operationPending = false;
+		let operationTimedOut = false;
 
 		function setMessage(value, error = false, busyMessage = false) {
 			const msg = $('[data-role="msg"]');
@@ -195,7 +230,7 @@ export default {
 				body.appendChild(tr);
 			}
 		}
-		function renderServices(services, profile) {
+		function renderServices(services, profile, watchdogAlive) {
 			const host = $('[data-role="services"]');
 			if (!host) return;
 			host.replaceChildren();
@@ -245,7 +280,7 @@ export default {
 					button.type = "button"; button.textContent = label; button.className = cls;
 					button.dataset.service = id; button.dataset.action = action;
 					button.title = action === "restart" ? restartScope(service, profile) : action === "start" ? `启动 ${service.label}，不影响其他服务` : `停止 ${service.label}（其他服务继续运行）`;
-					button.disabled = busy || (action === "start" ? service.healthy : action === "stop" ? !service.healthy : false);
+					button.disabled = busy || !watchdogAlive || (action === "start" ? service.healthy : action === "stop" ? !service.healthy : false);
 					actions.appendChild(button);
 				}
 
@@ -265,7 +300,9 @@ export default {
 		function paint(next) {
 			state = next;
 			watchdogPort = next?.watchdogPort || watchdogPort;
-			busy = Boolean(next?.operation);
+			if (!next?.operation) operationTimedOut = false;
+			const watchdogAlive = next?.watchdog === true;
+			busy = operationPending || (watchdogAlive && !operationTimedOut && Boolean(next?.operation));
 			const services = normalizedServices(next);
 			const profile = next?.profile === "development" ? "development" : "user";
 			$('[data-role="env"]')?.classList.toggle("dev", profile === "development");
@@ -283,7 +320,7 @@ export default {
 			if (matrixTable) matrixTable.hidden = profile !== "development";
 			const managed = next?.managedBy ? ` · 原管理器：${next.managedBy}` : "";
 			$('[data-role="env-detail"]').textContent = `${services.map((item) => `${item.label} :${item.servicePort || "?"}`).join(" · ")} · watchdog :${watchdogPort}${managed}`;
-			$('[data-role="phase"]').textContent = busy ? `正在${next.operation.action}：${next.operation.targets?.join(", ") || "全部"}` : `总状态：${next?.phase || "未知"}`;
+			$('[data-role="phase"]').textContent = busy ? `正在操作：${next?.operation?.targets?.join(", ") || "全部"}` : `总状态：${phaseText(next?.phase)}`;
 
 			const warn = $('[data-role="warn"]');
 			const warned = services.filter((item) => item.warning);
@@ -305,51 +342,53 @@ export default {
 				row.append(dot, label, port); status.appendChild(row);
 			}
 			const wd = doc.createElement("div"); wd.className = "rc-row";
-			wd.innerHTML = `<span class="rc-dot ok"></span><span>独立 watchdog：已就绪</span><span class="rc-port">127.0.0.1:${watchdogPort}</span>`;
+			wd.innerHTML = `<span class="rc-dot ${watchdogAlive ? "ok" : "bad"}"></span><span>独立 watchdog：${watchdogAlive ? "已就绪" : "重启守护未运行"}</span><span class="rc-port">${watchdogAlive ? `127.0.0.1:${watchdogPort}` : "重启按钮不可用，请先运行启动器"}</span>`;
 			status.appendChild(wd);
 
 			renderMatrix(services);
 			const allRestart = $('[data-global="restart"]');
-			if (allRestart) allRestart.disabled = busy || !services.some((item) => item.actions?.includes("restart"));
-			renderServices(services, profile);
+			if (allRestart) allRestart.disabled = busy || !watchdogAlive || !services.some((item) => item.actions?.includes("restart"));
+			renderServices(services, profile, watchdogAlive);
 			if (next?.lastError && !warned.length) setMessage(`最近一次操作失败：${next.lastError}`, true);
 		}
 		async function readState() {
 			// 首次必须向当前页面所属的后端询问 watchdog 端口；否则开发页会拿默认
 			// 8790，误连到同时运行的正式版 watchdog。后端断开后才用已获知的端口直连。
 			try { return await api("/state"); }
-			catch (backendError) {
-				try { return await watchdog(watchdogPort, "/state"); }
-				catch { throw backendError; }
+			catch {
+				const next = await watchdog(watchdogPort, "/state");
+				if (typeof next?.phase !== "string") throw new Error("重启守护状态响应无效");
+				return { ...next, watchdog: true };
 			}
 		}
 		async function refresh() {
 			try { paint(await readState()); }
-			catch (error) { setMessage(`状态读取失败：${error.message}`, true); }
-		}
-		async function waitForOperation(options = {}) {
-			for (;;) {
-				await new Promise((resolve) => setTimeout(resolve, 500));
-				try {
-					const next = await watchdog(watchdogPort, "/state");
-					paint(next);
-					if (!next.operation) {
-						if (next.lastError) return setMessage(`操作失败：${next.lastError}`, true);
-						setMessage("操作完成。", false);
-						if (options.reloadWhenDone) location.reload();
-						return;
-					}
-				} catch {}
+			catch (error) {
+				paint({ ...(state || {}), watchdog: false, operation: null, watchdogPort });
+				setMessage(`状态读取失败：${error.message}`, true);
 			}
 		}
 		async function run(path, message, reloadWhenDone = false) {
+			if (operationPending) return;
+			operationPending = true;
+			let failure = null;
 			setMessage(message, false, true);
 			try {
+				if (state?.watchdog !== true) throw new Error(`重启守护未运行（127.0.0.1:${watchdogPort}），请先运行 pi-web-ui 启动器。`);
 				await watchdog(watchdogPort, path, "POST");
-				await waitForOperation({ reloadWhenDone });
+				const next = await pollOperation({ port: watchdogPort, onState: (value) => paint({ ...value, watchdog: true }) });
+				if (next.lastError) setMessage(`操作失败：${next.lastError}`, true);
+				else {
+					setMessage("操作完成。");
+					if (reloadWhenDone) location.reload();
+				}
 			} catch (error) {
-				setMessage(error.message, true);
-				void refresh();
+				operationTimedOut = true;
+				failure = error;
+			} finally {
+				operationPending = false;
+				busy = false;
+				void refresh().then(() => { if (failure) setMessage(failure.message, true); });
 			}
 		}
 
