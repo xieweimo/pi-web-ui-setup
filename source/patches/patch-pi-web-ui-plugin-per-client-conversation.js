@@ -40,6 +40,31 @@ const read = (f) => fs.readFileSync(f, "utf8");
 const write = (f, s) => fs.writeFileSync(f, s, "utf8");
 const count = (s, needle) => s.split(needle).length - 1;
 
+// 0.100.0 起上游 #542 原生覆盖本补丁全部语义：provider 接收 {clientId}，
+// 指定客户端时 preferActive + includeSubagents，未指定时跳过子代理并挑最新快照，
+// 返回值也原生包含 isSubagent/sessionFile/model。命中整条链才判定退役。
+{
+	const agent = read(files.agentService);
+	const plugins = read(files.plugins);
+	const index = read(files.index);
+	if (
+		agent.includes("readConversationForPlugins(opts)") &&
+		agent.includes("opts?.preferActive ? this.convs.get(this.activeId) : undefined") &&
+		agent.includes("includeSubagents: opts?.includeSubagents") &&
+		agent.includes("isSubagent: target.isSubagent") &&
+		agent.includes("const want = (opts?.clientId ?? \"\").trim();") &&
+		agent.includes("preferActive: true, includeSubagents: true") &&
+		agent.includes("return pickLatestClientSnapshot(snaps);") &&
+		plugins.includes("getActiveConversation(options)") &&
+		plugins.includes("this.conversationProvider?.(options) ?? null") &&
+		plugins.includes("getActiveConversation: (opts) => self.getActiveConversation(opts)") &&
+		index.includes("pluginMgr.conversationProvider = (opts) => service.readConversationForPlugins?.(opts) ?? null;")
+	) {
+		console.log("✓ per-client conversation 补丁已退役：pi-web-ui 0.100.0+ 已原生覆盖 #542");
+		process.exit(0);
+	}
+}
+
 const edits = [
 	{
 		file: files.agentService,

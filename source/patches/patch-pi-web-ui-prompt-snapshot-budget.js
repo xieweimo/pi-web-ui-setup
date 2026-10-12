@@ -56,8 +56,9 @@ function replaceOnce(source, before, after, name) {
 	return source.replace(before, after);
 }
 function addRetryCleanup(source) {
-	const anchor = "        catch {\n            // ignore cleanup error\n        }\n    }\n}";
-	const block = `        catch {\n            // ignore cleanup error\n        }\n        if (signal?.aborted) {\n            // Windows 上取消的 Git 子进程可能晚于 finally 创建锁；只重扫本次 UUID 路径。\n            for (const delay of [1000, 3000, 10000]) {\n                const timer = setTimeout(() => {\n                    void Promise.allSettled([rm(tempIndex, { force: true }), rm(\`\${tempIndex}.lock\`, { force: true })]);\n                }, delay);\n                timer.unref();\n            }\n        } /* ${retryMarker} */\n    }\n}`;
+	// 0.104.4 在同文件新增相同的 cleanup catch；用本补丁的锁清理标记限定快照函数。
+	const anchor = `            await rm(\`\${tempIndex}.lock\`, { force: true }); /* ${cleanupMarker} */\n        }\n        catch {\n            // ignore cleanup error\n        }\n    }\n}`;
+	const block = `            await rm(\`\${tempIndex}.lock\`, { force: true }); /* ${cleanupMarker} */\n        }\n        catch {\n            // ignore cleanup error\n        }\n        if (signal?.aborted) {\n            // Windows 上取消的 Git 子进程可能晚于 finally 创建锁；只重扫本次 UUID 路径。\n            for (const delay of [1000, 3000, 10000]) {\n                const timer = setTimeout(() => {\n                    void Promise.allSettled([rm(tempIndex, { force: true }), rm(\`\${tempIndex}.lock\`, { force: true })]);\n                }, delay);\n                timer.unref();\n            }\n        } /* ${retryMarker} */\n    }\n}`;
 	return replaceOnce(source, anchor, block, "workspace-snapshot.js");
 }
 try {
@@ -68,8 +69,14 @@ try {
 	snapshot = replaceOnce(snapshot, "async function runGit(cwd, args, envExtra) {", `async function runGit(cwd, args, envExtra, signal) { /* ${marker} */`, "workspace-snapshot.js");
 	snapshot = replaceOnce(snapshot, "env: envExtra ? { ...process.env, ...envExtra } : process.env,\n        timeout: GIT_SNAPSHOT_TIMEOUT_MS,", "env: envExtra ? { ...process.env, ...envExtra } : process.env,\n        signal,\n        timeout: GIT_SNAPSHOT_TIMEOUT_MS,", "workspace-snapshot.js");
 	snapshot = replaceOnce(snapshot, "export async function createWorkspaceSnapshot(cwd) {\n    const gitDir = await gitDirOf(cwd);\n    if (!gitDir)", "export async function createWorkspaceSnapshot(cwd, signal) {\n    if (signal?.aborted) return null;\n    const gitDir = await gitDirOf(cwd, signal);\n    if (!gitDir || signal?.aborted)", "workspace-snapshot.js");
-	for (const [before, after] of [
+	const addVariants = [
 		['await runGit(cwd, ["add", "-A"], env);', 'await runGit(cwd, ["add", "-A"], env, signal);'],
+		['await runGit(cwd, ["add", "-A", "--", "."], env);', 'await runGit(cwd, ["add", "-A", "--", "."], env, signal);'],
+	];
+	const addVariant = addVariants.find(([before]) => snapshot.split(before).length === 2);
+	if (!addVariant) throw new Error('workspace-snapshot.js 锚点未唯一命中：git add -A 快照调用');
+	snapshot = snapshot.replace(addVariant[0], addVariant[1]);
+	for (const [before, after] of [
 		['const tree = await runGit(cwd, ["write-tree"], env);', 'const tree = await runGit(cwd, ["write-tree"], env, signal);'],
 		['await runGit(cwd, ["rev-parse", "--verify", "HEAD"]);', 'await runGit(cwd, ["rev-parse", "--verify", "HEAD"], undefined, signal);'],
 		['const commitHash = await runGit(cwd, commitArgs, env);', 'const commitHash = await runGit(cwd, commitArgs, env, signal);'],

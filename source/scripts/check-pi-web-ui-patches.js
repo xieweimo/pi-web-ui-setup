@@ -92,11 +92,11 @@ const MARKERS = {
 	"patch-pi-web-ui-free-models-only.js": { file: "server", marker: "free-models-only-v2" },
 	"patch-pi-web-ui-prompt-snapshot-budget.js": {
 		file: "server",
-		marker: ["piwork-prompt-snapshot-budget-v1", "piwork-prompt-snapshot-lock-cleanup-v2", "piwork-prompt-snapshot-lock-retry-v3", "AbortSignal.timeout(750)", "gitDirOf(cwd, signal)", "runGit(cwd, [\"add\", \"-A\"], env, signal)"],
+		marker: ["piwork-prompt-snapshot-budget-v1", "piwork-prompt-snapshot-lock-cleanup-v2", "piwork-prompt-snapshot-lock-retry-v3", "AbortSignal.timeout(750)", "gitDirOf(cwd, signal)", "runGit(cwd, [\"add\", \"-A\", \"--\", \".\"], env, signal)"],
 	},
 	"patch-pi-web-ui-session-ready-send.js": {
 		file: "web",
-		marker: ["piwork-session-ready-send-v1", "piwork-session-ready-send-v2", "sessionReady:t.status===`open`&&e.sessionReady", "da({ready:e.ready&&e.sessionReady", "e.type===`new_chat`&&t({type:`session_initializing`})"],
+		marker: ["piwork-session-ready-send-v1", "piwork-session-ready-send-v2", "sessionReady:t.status===`open`&&e.sessionReady", "ready:e.ready&&e.sessionReady,status:", "e.type===`new_chat`&&t({type:`session_initializing`})"],
 	},
 	"patch-pi-web-ui-page-call-browser-sinks.js": {
 		file: "server",

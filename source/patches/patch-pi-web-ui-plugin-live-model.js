@@ -40,6 +40,17 @@ if (source.includes(marker)) {
   console.log("live-model patch already exists");
   process.exit(0);
 }
+// 0.100.0 起上游 #542 已提供更完整的模型切换事件：setModel() 成功后调用
+// notifyPluginModelChange()，再经 onClientModelChanged 把带 clientId 的快照推给插件。
+// 这比旧补丁的全局 conversation-changed 通知更精确，识别到后直接退役。
+if (
+  source.includes("this.notifyPluginModelChange();") &&
+  source.includes("onClientModelChanged") &&
+  source.includes("notifyPluginModelChange()")
+) {
+  console.log("live-model patch retired: pi-web-ui 0.100.0+ has native per-client model change events");
+  process.exit(0);
+}
 const matched = setModelVariants.filter((v) => source.split(v.needle).length - 1 === 1);
 if (matched.length !== 1) {
   console.error(`pi-web-ui source changed; live-model patch not applied (setModel variants: ${matched.length})`);

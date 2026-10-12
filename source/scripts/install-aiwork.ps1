@@ -4,7 +4,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $templateFile = Join-Path $root 'configs\pi-settings.template.json'
 $agentDir = Join-Path $env:USERPROFILE '.pi\agent'
 if (-not $SkipNpmInstall) {
-    npm install -g '@earendil-works/pi-coding-agent@1.0.2' 'pi-web-ui@0.99.0'
+    npm install -g '@earendil-works/pi-coding-agent@1.1.0' 'pi-web-ui@0.104.4'
     if ($LASTEXITCODE -ne 0) { throw "npm install 失败（退出码 $LASTEXITCODE）" }
 }
 if (-not (Get-Command pi -ErrorAction SilentlyContinue) -or -not (Get-Command pi-web-ui -ErrorAction SilentlyContinue)) { throw 'pi or pi-web-ui was not found.' }

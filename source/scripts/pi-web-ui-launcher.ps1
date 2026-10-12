@@ -244,20 +244,15 @@ if (-not (Test-Listening)) {
     Write-LauncherLog '服务已在运行 → 不重复启动'
 }
 
-# 2. 已有页面连着就不再开新标签（重跑启动器只为接管守护时不该多弹一个页面）。
-#   但「完全静默」会让用户以为启动失败（2026-09-29 实际误判）：此时给一次明确的
-#   可见反馈，保证双击一定有下文。弹框会阻塞到点击确定，因此它出现在监控循环
-#   之前：不点确定只是不接管守护，服务本身照常运行。
-$pageConnected = [bool](Get-NetTCPConnection -LocalPort $port -State Established -ErrorAction SilentlyContinue)
-if (-not $pageConnected) {
-    Start-Process "http://localhost:$port"
+# 2. 双击入口的明确语义是打开网页。TCP Established 可能是插件、健康检查或
+#    其他客户端连接，不能证明用户浏览器已有标签；不能拿它来跳过打开动作。
+try {
+    Start-Process "http://localhost:$port" -ErrorAction Stop
     Write-LauncherLog "已打开页面 http://localhost:$port"
-} else {
-    Write-LauncherLog '页面已连接 → 不重复开标签，弹提示告知已在运行'
+} catch {
+    Write-LauncherLog "打开页面失败：$($_.Exception.Message)"
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show(
-        "pi-web-ui 已经在运行，服务正常，无需重启。`n`n端口：http://localhost:$port`n`n刷新界面：在页面上按 F5`n重启服务：页面里点「重启网页服务」",
-        'pi-web-ui 已在运行') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("服务已启动，但无法自动打开浏览器。请访问 http://localhost:$port`n$($_.Exception.Message)", 'pi-web-ui') | Out-Null
 }
 Start-Sleep -Seconds 5
 

@@ -1,0 +1,18 @@
+{
+	"piVersion": "1.1.0",
+	"piWebUiVersion": "0.104.4",
+	"patches": [
+		"patches/patch-pi-web-ui-topbar-menu-buttons.js",
+		"patches/patch-pi-web-ui-plugin-topbar-cache.js",
+		"patches/patch-pi-web-ui-plan-board-clear.js",
+		"patches/patch-pi-web-ui-plan-marker.js",
+		"patches/patch-pi-invalid-toolcall-names.js",
+		"patches/patch-pi-web-ui-sw-entry-revalidate.js",
+		"patches/patch-pi-web-ui-free-models-only.js",
+		"patches/patch-pi-web-ui-free-model-badge.js",
+		"patches/patch-pi-web-ui-prompt-snapshot-budget.js",
+		"patches/patch-pi-web-ui-session-ready-send.js",
+		"patches/patch-pi-web-ui-page-call-browser-sinks.js"
+	],
+	"notes": "pi 1.1.0 + pi-web-ui 0.104.4（2026-10-12 本地适配与重启后页面验收通过，待用户明确要求同步）。11 项补丁逐项核验；重锚 plugin-topbar-cache、prompt-snapshot-budget、session-ready-send、page-call-browser-sinks（AgentService 挂载移入 daemon）；pi 内核副本已重新补齐。"
+}

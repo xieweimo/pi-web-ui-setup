@@ -1,0 +1,18 @@
+{
+	"piVersion": "1.1.0",
+	"piWebUiVersion": "0.100.0",
+	"patches": [
+		"patches/patch-pi-web-ui-topbar-menu-buttons.js",
+		"patches/patch-pi-web-ui-plugin-topbar-cache.js",
+		"patches/patch-pi-web-ui-plan-board-clear.js",
+		"patches/patch-pi-web-ui-plan-marker.js",
+		"patches/patch-pi-invalid-toolcall-names.js",
+		"patches/patch-pi-web-ui-sw-entry-revalidate.js",
+		"patches/patch-pi-web-ui-free-models-only.js",
+		"patches/patch-pi-web-ui-free-model-badge.js",
+		"patches/patch-pi-web-ui-prompt-snapshot-budget.js",
+		"patches/patch-pi-web-ui-session-ready-send.js",
+		"patches/patch-pi-web-ui-page-call-browser-sinks.js"
+	],
+	"notes": "pi 1.1.0 + pi-web-ui 0.100.0（2026-10-12 本地适配与验收完成，待用户明确要求后同步）。在 1.0.2 + 0.99.0 profile 基础上逐项复核；live-model、per-client-conversation 与 goal-review 三项已由上游 #542/#543 原生覆盖，退出新 profile。pi 1.1.0 新增程序状态、工具选择增量语法并调整部分运行时行为，pi-web-ui 0.100.0 新增工具延迟加载、建议操作标记、子代理折叠、统一栏位组件及 SDK 多来源探测。"
+}

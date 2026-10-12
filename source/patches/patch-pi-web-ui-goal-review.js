@@ -55,6 +55,21 @@ if (!target || !fs.existsSync(target)) {
 }
 const ORIGINAL = fs.readFileSync(target, "utf8");
 
+// 0.100.0 已原生合入上游 #543，完整覆盖本补丁三项语义：执行者证据透传、
+// 空 feedback 兜底，以及只验收本轮声称完成项的中英文判定规则。
+if (
+	!REMOVE &&
+	ORIGINAL.includes("readExecutorEvidence(execId)") &&
+	ORIGINAL.includes("this.readExecutorEvidence(execId)") &&
+	ORIGINAL.includes("ensureReviewerFeedback(verdict, feedback, prevFeedback)") &&
+	ORIGINAL.includes("const verdictFeedback = this.ensureReviewerFeedback(verdict.verdict, verdict.feedback, feedback);") &&
+	ORIGINAL.includes("只判【执行者本轮自述】里**声称已完成**的条目") &&
+	ORIGINAL.includes("Judge only the items the executor's summary **claims to have completed this round**")
+) {
+	console.log("✓ goal-review 补丁已退役：pi-web-ui 0.100.0+ 已原生合入 #543");
+	process.exit(0);
+}
+
 // ---------------------------------------------------------------------------
 // 新增方法：审查证据采集
 // ---------------------------------------------------------------------------

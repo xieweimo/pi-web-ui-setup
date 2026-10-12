@@ -1,8 +1,8 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $root 'archive'
 $stage = Join-Path $outDir '.pi-web-ui-stage'
-$zip = Join-Path $outDir 'PiWebUI-Setup_pi-1.0.2_web-0.99.0.zip'
+$zip = Join-Path $outDir 'PiWebUI-Setup_pi-1.1.0_web-0.104.4.zip'
 $candidate = Join-Path $outDir '.pi-web-ui-next.zip'
 $backup = Join-Path $outDir '.pi-web-ui-previous.zip'
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -54,7 +54,14 @@ try {
         try { $entryHash = [BitConverter]::ToString($hash.ComputeHash($stream)) }
         finally { $hash.Dispose() }
       } finally { $stream.Dispose() }
-      $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+      # Windows PowerShell 精简环境里可能没有 Get-FileHash；直接用 .NET 计算，
+      # 与上面的 ZIP entry 哈希同一实现，兼容 Windows 7/旧实验室机器。
+      $sourceStream = [System.IO.File]::OpenRead($file.FullName)
+      try {
+        $sourceHasher = [System.Security.Cryptography.SHA256]::Create()
+        try { $sourceHash = [BitConverter]::ToString($sourceHasher.ComputeHash($sourceStream)).Replace('-', '') }
+        finally { $sourceHasher.Dispose() }
+      } finally { $sourceStream.Dispose() }
       $entryHash = $entryHash.Replace('-', '')
       if ($entryHash -ne $sourceHash) { throw "安装包与源码不一致：$name" }
     }

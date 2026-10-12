@@ -15,21 +15,37 @@ function once(source, from, to, label) {
 	if (source.split(from).length !== 2) throw new Error(`${label} 锚点未唯一命中：${from.slice(0, 95)}`);
 	return source.replace(from, to);
 }
+function onceVariant(source, variants, label) {
+	const hit = variants.find(([from]) => source.split(from).length === 2);
+	if (!hit) throw new Error(`${label} 锚点未唯一命中：已知变体 ${variants.length} 个`);
+	return source.replace(hit[0], hit[1]);
+}
 function patchBundle(source) {
 	const edits = [
 		["status:t.status,ready:t.status===`open`&&e.ready,terminals:", "status:t.status,ready:t.status===`open`&&e.ready,sessionReady:t.status===`open`&&e.sessionReady,terminals:"],
-		["return r&&r!==n&&(i=xc(r)),{...e,ready:!0,state:t.state,sessions:i,", "return r&&r!==n&&(i=xc(r)),{...e,ready:!0,sessionReady:!0,state:t.state,sessions:i,"],
 		["{...e,ready:!0,state:i,approval:", "{...e,ready:!0,sessionReady:!0,state:i,approval:"],
 		["status:`connecting`,ready:!1,state:null,hostMetrics:", "status:`connecting`,ready:!1,sessionReady:!1,state:null,hostMetrics:"],
-		["da({ready:e.ready,status:e.status,cwd:", "da({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
 		["},[e.ready,e.status,e.state?.cwd,e.state?.workspaceRoots", "},[e.ready,e.sessionReady,e.status,e.state?.cwd,e.state?.workspaceRoots"],
 	];
 	for (const [from, to] of edits) source = once(source, from, to, "bundle");
+	source = onceVariant(source, [
+		["return r&&r!==n&&(i=xc(r)),{...e,ready:!0,state:t.state,sessions:i,", "return r&&r!==n&&(i=xc(r)),{...e,ready:!0,sessionReady:!0,state:t.state,sessions:i,"],
+		["return r&&r!==n&&(i=Uc(r)),{...e,ready:!0,state:t.state,sessions:i,", "return r&&r!==n&&(i=Uc(r)),{...e,ready:!0,sessionReady:!0,state:t.state,sessions:i,"],
+		[",{...e,ready:!0,state:t.state,transition:s,sessions:a,", ",{...e,ready:!0,sessionReady:!0,state:t.state,transition:s,sessions:a,"],
+	], "bundle snapshot");
+	source = onceVariant(source, [
+		["da({ready:e.ready,status:e.status,cwd:", "da({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
+		["pa({ready:e.ready,status:e.status,cwd:", "pa({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
+		["Ya({ready:e.ready,status:e.status,cwd:", "Ya({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
+	], "bundle ready consumer");
 	return once(source, "sessionReady:t.status===`open`&&e.sessionReady,terminals:", `sessionReady:t.status===\`open\`&&e.sessionReady,/*${marker}*/terminals:` , "bundle 标记");
 }
 function patchBundleTransition(source) {
 	source = once(source, "case`host_metrics`:return{...e,hostMetrics:t.metrics};", `case\`session_initializing\`:return{...e,sessionReady:!1};/*${transitionMarker}*/case\`host_metrics\`:return{...e,hostMetrics:t.metrics};`, "bundle 新会话门禁");
-	return once(source, "r.send(JSON.stringify(e)),e.type===`question_answer`", "e.type===`new_chat`&&t({type:`session_initializing`}),r.send(JSON.stringify(e)),e.type===`question_answer`", "bundle 发送拦截");
+	return onceVariant(source, [
+		["r.send(JSON.stringify(e)),e.type===`question_answer`", "e.type===`new_chat`&&t({type:`session_initializing`}),r.send(JSON.stringify(e)),e.type===`question_answer`"],
+		["i.send(JSON.stringify(e)),e.type===`question_answer`", "e.type===`new_chat`&&t({type:`session_initializing`}),i.send(JSON.stringify(e)),e.type===`question_answer`"],
+	], "bundle 发送拦截");
 }
 function patchDevTransition(source) {
 	const crlf = source.includes("\r\n");

@@ -148,11 +148,20 @@ try {
 	}
 	replaceOne(indexFile, 'import { renameMarker } from "./builtins/rename.js";', 'import { renameMarker } from "./builtins/rename.js";\nimport { planMarker } from "./builtins/plan.js";', "marker import");
 	replaceOne(indexFile, "registerMarker(renameMarker);", "registerMarker(renameMarker);\n    registerMarker(planMarker);", "marker registration");
-	replaceOne(indexFile, "export { todoMarker, notifyMarker, renameMarker };", "export { todoMarker, notifyMarker, renameMarker, planMarker };", "marker export");
+	const indexText = fs.readFileSync(indexFile, "utf8");
+	if (!indexText.includes("planMarker };")) {
+		const exportNeedles = [
+			"export { todoMarker, notifyMarker, renameMarker };",
+			"export { todoMarker, notifyMarker, renameMarker, actionMarker, suggestMarker };",
+		];
+		const exportNeedle = exportNeedles.find((needle) => indexText.split(needle).length - 1 === 1);
+		if (!exportNeedle) throw new Error("marker export 锚点命中 0 次");
+		replaceOne(indexFile, exportNeedle, exportNeedle.replace(" };", ", planMarker };"), "marker export");
+	}
 	replaceOne(serviceFile, "const ctx = {\n                conversationId,\n                notify: (msg, level, msgEn) => {", "const ctx = {\n                conversationId,\n                host: this.host,\n                notify: (msg, level, msgEn) => {", "marker context");
-	replaceOne(
-		serviceFile,
-		`        const getOrInit = (ns) => {
+	const serviceText = fs.readFileSync(serviceFile, "utf8");
+	if (!serviceText.includes(snapshotMarker)) {
+		const legacyGetOrInit = `        const getOrInit = (ns) => {
             let st = states.get(ns);
             if (st !== undefined)
                 return st;
@@ -164,19 +173,38 @@ try {
             }
             states.set(ns, st);
             return st;
-        };`,
-		`        const getOrInit = (ns) => {
-            let st = states.get(ns);
+        };`;
+		const modernGetOrInit = `        const getOrInit = (ns) => {
+			const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
+			let st = states.get(canonicalNs);
+			if (st !== undefined)
+				return st;
+			if (canonicalNs === TODO_NAMESPACE)
+				st = this.getState(conversationId, canonicalNs, initTodoState);
+			else if (canonicalNs === ACTION_NAMESPACE)
+				st = this.getState(conversationId, canonicalNs, initActionState);
+			else {
+				const marker = getMarker(canonicalNs);
+				st = marker?.init ? marker.init() : {};
+			}
+			states.set(canonicalNs, st);
+			return st;
+		};`.replace(/\t/g, "    ");
+		const needle = [legacyGetOrInit, modernGetOrInit].find((n) => serviceText.split(n).length - 1 === 1);
+		if (!needle) throw new Error("marker snapshot load 锚点命中 0 次");
+		const replacement = `        const getOrInit = (ns) => {
+            const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
+            let st = states.get(canonicalNs);
             if (st !== undefined)
                 return st;
             // ${snapshotMarker}：先读会话快照（服务重启后靠它回填），再回落 marker.init()。
-            const marker = getMarker(ns);
-            st = this.getState(conversationId, ns, () => (ns === TODO_NAMESPACE ? initTodoState() : marker?.init ? marker.init() : {}));
-            states.set(ns, st);
+            const marker = getMarker(canonicalNs);
+            st = this.getState(conversationId, canonicalNs, () => (canonicalNs === TODO_NAMESPACE ? initTodoState() : canonicalNs === ACTION_NAMESPACE ? initActionState() : marker?.init ? marker.init() : {}));
+            states.set(canonicalNs, st);
             return st;
-        };`,
-		"marker snapshot load",
-	);
+        };`;
+		fs.writeFileSync(serviceFile, serviceText.replace(needle, replacement), "utf8");
+	}
 	// plan marker 需要真实 AgentService 的 PlanManager；此前只给 marker-service
 	// 的 ctx 注入 host，却遗漏了构造 MarkerService 时传入该字段，导致运行时必报
 	// “Plan board service is unavailable”。
