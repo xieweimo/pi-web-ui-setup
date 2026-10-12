@@ -80,6 +80,7 @@ $quickPhraseQueueCleanup = Join-Path $cwd 'patches\patch-pi-web-ui-quick-phrase-
 $topbarMenuButtonsPatch = Join-Path $cwd 'patches\patch-pi-web-ui-topbar-menu-buttons.js'
 $pluginTopbarCachePatch = Join-Path $cwd 'patches\patch-pi-web-ui-plugin-topbar-cache.js'
 $planBoardClearPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-board-clear.js'
+$goalbarHitAreaPatch = Join-Path $cwd 'patches\patch-pi-web-ui-goalbar-hit-area.js'
 $planBoardManager = Join-Path $cwd 'scripts\manage-plan-board.mjs'
 # 入口 bundle 是就地打补丁的（文件名不变），必须让 SW 对入口强制回源重校验，
 # 否则浏览器会一直跑补丁前的老前端（"说改好了，用起来还是老样子"）。
@@ -122,7 +123,7 @@ $planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
 $failedPatches = @()
-foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch, $promptSnapshotBudgetPatch, $sessionReadySendPatch, $pageCallBrowserSinksPatch)) {
+foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $goalbarHitAreaPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch, $promptSnapshotBudgetPatch, $sessionReadySendPatch, $pageCallBrowserSinksPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) {
         & node $patch | Out-Null
         # 任何非零都算失败：2 = 锚点失效，1 = 未捕获异常（如 IO/权限），同样不能静默启服。

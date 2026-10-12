@@ -17,7 +17,7 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
+const { locateWebUiFile, packageVersion } = require("../scripts/pi-web-ui-locate.js");
 
 const marker = "plan-board-clear-no-confirm-v1";
 const ROOT = path.resolve(__dirname, "..");
@@ -42,22 +42,41 @@ function patchBundle() {
 		return;
 	}
 	const source = fs.readFileSync(target, "utf8");
-	if (source.includes(marker)) {
+	let patched = source;
+	if (patched.includes(marker)) {
 		note(0, "✓ 看板清空无阻塞补丁已存在（生产 bundle）");
-		return;
+	} else {
+		// 锚点故意不含压缩后的变量名：0.96.1 是 `l=()=>{…}`、0.99.0 变成 `v=()=>{…}`，
+		// 绑变量名等于上游每次重压缩都要改补丁；仍要求唯一命中。
+		const needle = "window.confirm(`确定要清空当前任务计划看板吗？`)&&$({type:`plan_update`,steps:[]})";
+		const replacement = "$({type:`plan_update`,steps:[]})/*plan-board-clear-no-confirm-v1*/";
+		const count = patched.split(needle).length - 1;
+		if (count !== 1) {
+			note(2, `✗ 生产 bundle 看板清空锚点命中 ${count} 次，拒绝模糊替换`);
+			return;
+		}
+		patched = patched.replace(needle, replacement);
+		note(0, "✓ 已移除任务看板清空的同步 confirm() 阻塞（生产 bundle）");
 	}
-	// 锛點故意不含压缩后的变量名：0.96.1 是 `l=()=>{…}`、0.99.0 变成 `v=()=>{…}`，
-	// 绑变量名等于上游每次重压缩都要改补丁。这里只匹配确认框调用本身（仍然要求唯一命中，
-	// 不做模糊替换）。
-	const needle = "window.confirm(`确定要清空当前任务计划看板吗？`)&&$({type:`plan_update`,steps:[]})";
-	const replacement = "$({type:`plan_update`,steps:[]})/*plan-board-clear-no-confirm-v1*/";
-	const count = source.split(needle).length - 1;
-	if (count !== 1) {
-		note(2, `✗ 生产 bundle 看板清空锚点命中 ${count} 次，拒绝模糊替换`);
-		return;
+	// 0.104.4 把清空按钮放在 n&&（仅展开）区域，默认折叠时根本无法关闭。
+	// 把按钮移至常驻操作区；旧版没有此区域，本来就始终可见。
+	const visibleMarker = "plan-board-clear-always-visible-v2";
+	const [major, minor] = (packageVersion("pi-web-ui") || "0.0").split(".").map(Number);
+	if (major >= 1 || minor >= 104) {
+		if (!patched.includes(visibleMarker)) {
+			const clearButton = ',(0,X.jsx)(`button`,{type:`button`,className:`plan-board-iconbtn`,title:t(`clear`),onClick:e=>{e.stopPropagation(),v()},children:(0,X.jsx)(z,{})})';
+			const insertBefore = 'n&&(0,X.jsx)(`button`,{type:`button`,className:`plan-board-clean-handoff`';
+			const clearCount = patched.split(clearButton).length - 1;
+			const insertCount = patched.split(insertBefore).length - 1;
+			if (clearCount !== 1 || insertCount !== 1) {
+				note(2, `✗ 生产 bundle 常驻清空按钮锚点命中 ${clearCount}/${insertCount} 次，拒绝模糊替换`);
+				return;
+			}
+			patched = patched.replace(clearButton, "").replace(insertBefore, `${clearButton.slice(1)}/*${visibleMarker}*/,${insertBefore}`);
+			note(0, "✓ 清空按钮已移至折叠态也可见的操作区");
+		}
 	}
-	fs.writeFileSync(target, source.replace(needle, replacement), "utf8");
-	note(0, "✓ 已移除任务看板清空的同步 confirm() 阻塞（生产 bundle）");
+	if (patched !== source) fs.writeFileSync(target, patched, "utf8");
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +90,7 @@ function patchDevSource() {
 	}
 	const raw = fs.readFileSync(target, "utf8");
 	if (raw.includes(marker)) {
-		note(0, "✓ 看板清空无阻塞补丁已存在（dev 源码 PlanBoard.tsx）");
+		note(0, "✓ 看板清空无阻塞补丁已存在（dev 源码 PlanBoard.tsx；按钮原本常驻）");
 		return;
 	}
 	const needle = `\tconst handleClearPlan = () => {

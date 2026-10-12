@@ -53,6 +53,7 @@ const MARKERS = {
 	"patch-pi-web-ui-topbar-menu-buttons.js": { file: "web", marker: "topbar-menu-buttons-patch" },
 	"patch-pi-web-ui-plugin-topbar-cache.js": { file: "web", marker: "plugin-topbar-cache-patch-v2" },
 	"patch-pi-web-ui-plan-board-clear.js": { file: "web", marker: "plan-board-clear-no-confirm-v1" },
+	"patch-pi-web-ui-goalbar-hit-area.js": { file: "web", marker: "piwork-goalbar-hit-area-v1" },
 	// plan-marker：restore-v2 / legacy-status-migration-v4 两个标记自 0.99.0 起**退役** ——
 	// 上游自己持久化计划（PlanManager 落盘 plans.json、按 sessionId）并在快照里直出 plan，
 	// 我们那两处注入已删（见 patches/patch-pi-web-ui-plan-marker.js 注释与升级适配记录）。
@@ -214,6 +215,10 @@ if (!profile) {
 	process.exit(2);
 }
 pass("profile", `pi-${piVer}_web-${webVer}.json（${profile.patches.length} 项）`);
+// 0.104.4 起按钮默认藏在折叠区，旧 v1 标记只代表去掉 confirm，不能代表可直接关闭。
+if (Number(webVer.split(".")[1]) >= 104 || Number(webVer.split(".")[0]) >= 1) {
+	MARKERS["patch-pi-web-ui-plan-board-clear.js"].marker = ["plan-board-clear-no-confirm-v1", "plan-board-clear-always-visible-v2"];
+}
 
 // ---- 2. 压缩产物语法（只查被补丁改过的文件：全量查 85 个文件白耗 5 秒）----
 const markersByKind = new Map();
@@ -292,7 +297,7 @@ if (/this\.markerSvc = new MarkerService\(\{[\s\S]*?planManager: this\.planManag
 		const text = fs.readFileSync(devSrc, "utf8");
 		const hasMarker = text.includes("plan-board-clear-no-confirm-v1");
 		const hasConfirm = /window\.confirm\("确定要清空当前任务计划看板吗？"\)/.test(text);
-		if (hasMarker && !hasConfirm) pass("dev source plan-board-clear", "PlanBoard.tsx 已去 confirm");
+		if (hasMarker && !hasConfirm) pass("dev source plan-board-clear", "PlanBoard.tsx 已去 confirm（按钮常驻）");
 		else if (hasConfirm) fail("dev source plan-board-clear", "源码仍含 window.confirm —— 5173 页面清空会卡");
 		else fail("dev source plan-board-clear", "缺 marker，无法确认补丁状态（可能被上游还原）");
 	}
