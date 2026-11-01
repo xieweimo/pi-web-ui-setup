@@ -21,26 +21,55 @@ const WATCHDOG_PORT = Number(process.env.PI_WEB_UI_WATCHDOG_PORT || 8790);
 function callWatchdog(pathname, method = "GET", timeoutMs = 3000) {
 	return new Promise((resolve) => {
 		let done = false;
+		let deadline;
 		const finish = (value) => {
 			if (!done) {
 				done = true;
+				if (deadline) clearTimeout(deadline);
 				resolve(value);
 			}
 		};
-		const req = http.request({ host: WATCHDOG_HOST, port: WATCHDOG_PORT, path: pathname, method, timeout: timeoutMs }, (res) => {
-			let body = "";
-			res.setEncoding("utf8");
-			res.on("data", (chunk) => { body += chunk; });
-			res.on("end", () => {
-				let data = {};
-				try { data = body ? JSON.parse(body) : {}; } catch { data = { error: body || `HTTP ${res.statusCode}` }; }
-				finish({ ...data, ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300 && data.ok !== false, status: res.statusCode ?? 0 });
+		let req;
+		try {
+			req = http.request({ host: WATCHDOG_HOST, port: WATCHDOG_PORT, path: pathname, method, timeout: timeoutMs }, (res) => {
+				let body = "", bytes = 0;
+				res.setEncoding("utf8");
+				res.on("data", (chunk) => {
+					if (done) return;
+					bytes += Buffer.byteLength(chunk, 'utf8');
+					if (bytes > 256 * 1024) {
+						finish({ ok: false, status: 502, error: '重启守护响应超过大小限制' });
+						res.destroy(); req.destroy(); return;
+					}
+					body += chunk;
+				});
+				res.on('aborted', () => finish({ ok: false, status: 502, error: '重启守护响应中途断开' }));
+				res.on('error', (err) => finish({ ok: false, status: 502, error: String(err?.message ?? err).slice(0, 500) }));
+				res.on("end", () => {
+					if (done) return;
+					let data;
+					try {
+						data = JSON.parse(body);
+						if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error('非对象响应');
+					} catch {
+						const status = res.statusCode >= 400 ? res.statusCode : 502;
+						finish({ ok: false, status, error: body.slice(0, 500) || '重启守护返回空响应' }); return;
+					}
+					const status = res.statusCode ?? 0;
+					const ok = status >= 200 && status < 300 && (method === 'GET' ? data.ok !== false : data.ok === true);
+					finish({ ...data, ok, status: !ok && status >= 200 && status < 300 ? 502 : status });
+				});
 			});
-		});
-		req.on("timeout", () => {
+		} catch (err) {
+			finish({ ok: false, status: 0, error: String(err?.code ?? err?.message ?? err) }); return;
+		}
+		const expire = () => {
+			finish({ ok: false, status: 0, error: 'timeout' });
 			req.destroy();
-			finish({ ok: false, status: 0, error: "timeout" });
-		});
+		};
+		req.on('timeout', expire);
+		// socket超时仅限制闲置；独立墙钟时限防止持续分块响应一直拖住路由。
+		deadline = setTimeout(expire, timeoutMs);
 		req.on("error", (err) => finish({ ok: false, status: 0, error: String(err?.code ?? err?.message ?? err) }));
 		req.end();
 	});

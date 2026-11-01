@@ -42,6 +42,7 @@ const job = {
 let activeRuns = 0;
 let child = null;
 let timer = null;
+let timedOut = false;
 /** activate 时记下宿主，用于作业结束时发通知。 */
 let hostRef = null;
 
@@ -108,6 +109,20 @@ function pushLines(chunk) {
 	if (job.lines.length > MAX_LINES) job.lines.splice(0, job.lines.length - MAX_LINES);
 }
 
+// 按流缓冲未完成的行：UTF-8字符由setEncoding处理，行边界由这里处理。
+function outputReader(isCurrent) {
+	let pending = '';
+	return {
+		data(chunk) {
+			if (!isCurrent()) return;
+			const parts = (pending + String(chunk).replace(/\r/g, '')).split('\n');
+			pending = parts.pop().slice(0, 500);
+			for (const line of parts) pushLines(line);
+		},
+		flush() { if (isCurrent() && pending) pushLines(pending); pending = ''; },
+	};
+}
+
 function snapshot(host) {
 	return {
 		running: job.running,
@@ -134,7 +149,8 @@ function finalize(code, host) {
 	clearTimer();
 	job.running = false;
 	job.finishedAt = Date.now();
-	job.exitCode = typeof code === "number" ? code : null;
+	job.exitCode = timedOut ? 124 : (typeof code === "number" ? code : null);
+	if (timedOut) job.error = '同步已超时；主进程已退出，本轮按失败处理';
 	child = null;
 	const ok = job.exitCode === 0;
 	const detail = job.lines.at(-1) ?? "";
@@ -166,6 +182,7 @@ function startJob(host) {
 	job.exitCode = null;
 	job.error = null;
 	job.lines = [];
+	timedOut = false;
 	// 必须在脚本提交前快照；同步完成后工作区变干净，再查就无法说明本次推送了什么。
 	job.changes = captureChanges(root);
 	try {
@@ -191,18 +208,28 @@ function startJob(host) {
 	// setEncoding 内部会保留跨 chunk 的半个 UTF-8 字符，避免边界处出现 �。
 	child.stdout?.setEncoding("utf8");
 	child.stderr?.setEncoding("utf8");
-	child.stdout?.on("data", pushLines);
-	child.stderr?.on("data", pushLines);
+	// 卸载/重载后旧进程可能迟到事件，不能污染新作业的输出、状态与计时器。
+	const jobChild = child;
+	const stdout = outputReader(() => child === jobChild);
+	const stderr = outputReader(() => child === jobChild);
+	child.stdout?.on("data", stdout.data);
+	child.stderr?.on("data", stderr.data);
 	child.on("error", (err) => {
-		job.error = String(err?.message ?? err);
+		if (child === jobChild) job.error = String(err?.message ?? err);
 	});
-	child.on("close", (code) => finalize(code, host));
+	child.on("close", (code) => {
+		if (child === jobChild) { stdout.flush(); stderr.flush(); finalize(code, host); }
+	});
 	timer = setTimeout(() => {
-		pushLines(`[超时] 同步超过 ${Math.round(JOB_TIMEOUT_MS / 60000)} 分钟，已终止`);
+		if (child !== jobChild) return;
+		timedOut = true;
+		stdout.flush(); stderr.flush();
+		job.error = `同步超时（${Math.round(JOB_TIMEOUT_MS / 60000)}分钟），已请求终止，进程停止尚未确认`;
+		pushLines(`[超时] ${job.error}`);
 		try {
-			child?.kill();
-		} catch {
-			/* 已退出 */
+			if (!jobChild.kill()) job.error = '同步超时，终止请求失败，未确认停止；已保留同步锁';
+		} catch (err) {
+			job.error = `同步超时，未确认停止：${String(err?.message ?? err)}`;
 		}
 	}, JOB_TIMEOUT_MS);
 	timer.unref?.();
@@ -230,7 +257,7 @@ export default {
 			} catch {
 				/* 宿主 API 变化：只靠事件计数 */
 			}
-			res.json({ busy: activeRuns > 0 || streaming, activeRuns, streaming });
+			res.json({ busy: job.running || activeRuns > 0 || streaming, activeRuns, streaming, syncing: job.running });
 		});
 
 		// 状态查询：前端点完按钮就轮询它，直到 running=false。
@@ -257,12 +284,19 @@ export default {
 			clearTimer();
 			offRunEvent?.();
 			activeRuns = 0;
+			const stoppingChild = child;
+			child = null;
+			if (job.running) {
+				job.running = false;
+				job.finishedAt = Date.now();
+				job.exitCode = null;
+				job.error = '插件已卸载，同步作业已取消';
+			}
 			try {
-				child?.kill();
+				stoppingChild?.kill();
 			} catch {
 				/* 已退出 */
 			}
-			child = null;
 			hostRef = null;
 			host.log("deactivated");
 		};
