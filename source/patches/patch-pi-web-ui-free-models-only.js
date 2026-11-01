@@ -124,20 +124,26 @@ if (source.includes(v2Marker)) {
 	process.exit(0);
 }
 
-const anchor = `            const available = await mr.getAvailable();
-            const models = available.map((m) => ({`;
-const patched = `            const available = await mr.getAvailable();
-            const models = filterVisiblePiModels(available).map((m) => ({`;
-if (!source.includes(anchor) || source.includes("filterVisiblePiModels(")) {
+// 0.114.x 在取得模型后加入 enabledModels 作用域；仅替换 listModels 内的映射，保留上游逻辑。
+const anchors = [
+	[`            const available = await mr.getAvailable();\n            const models = available.map((m) => ({`, `            const available = await mr.getAvailable();\n            const models = filterVisiblePiModels(available).map((m) => ({`],
+	[`            const models = available.map((m) => {\n                const fullId = \`\${m.provider}/\${m.id}\`;`, `            const models = filterVisiblePiModels(available).map((m) => {\n                const fullId = \`\${m.provider}/\${m.id}\`;`],
+];
+const matching = anchors.filter(([before]) => source.split(before).length === 2);
+if (matching.length !== 1 || source.includes("filterVisiblePiModels(")) {
 	console.error("✗ 全新安装锚点未命中或已有未知同名标识符，拒绝模糊替换");
 	process.exit(2);
 }
-if (!source.includes(fieldAnchor)) {
-	console.error("✗ 字段锚点未命中，拒绝写入半成品");
+const fieldVariants = [fieldAnchor, fieldAnchor.split("\n").map((line) => `    ${line}`).join("\n")];
+const matchedFields = fieldVariants.filter((field) => source.split(field).length === 2);
+if (matchedFields.length !== 1) {
+	console.error("✗ 字段锚点未唯一命中，拒绝写入半成品");
 	process.exit(2);
 }
-source = source.replace(anchor, patched);
-source = source.replace(fieldAnchor, `${fieldAnchor}\n                free: piModelIsVerifiedFree(m),`);
+source = source.replace(matching[0][0], matching[0][1]);
+const field = matchedFields[0];
+const indent = field.match(/^\s*/)[0];
+source = source.replace(field, `${field}\n${indent}free: piModelIsVerifiedFree(m),`);
 source += rules;
 fs.writeFileSync(target, source);
 console.log(`✓ 已为 ${target} 注入仅限已验证免费模型的过滤（${marker}）`);

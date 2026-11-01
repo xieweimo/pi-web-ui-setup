@@ -1,0 +1,18 @@
+{
+	"piVersion": "1.4.0",
+	"piWebUiVersion": "0.114.3",
+	"patches": [
+		"patches/patch-pi-web-ui-topbar-menu-buttons.js",
+		"patches/patch-pi-web-ui-plugin-topbar-cache.js",
+		"patches/patch-pi-web-ui-plan-board-clear.js",
+		"patches/patch-pi-web-ui-plan-marker.js",
+		"patches/patch-pi-invalid-toolcall-names.js",
+		"patches/patch-pi-web-ui-sw-entry-revalidate.js",
+		"patches/patch-pi-web-ui-free-models-only.js",
+		"patches/patch-pi-web-ui-free-model-badge.js",
+		"patches/patch-pi-web-ui-session-ready-send.js",
+		"patches/patch-pi-web-ui-page-call-browser-sinks.js",
+		"patches/patch-pi-web-ui-goalbar-hit-area.js"
+	],
+	"notes": "pi 1.4.0 + pi-web-ui 0.114.3。本版原生支持普通 marker 快照读取，前端 i18n 拆分为语言 chunk；任务看板补丁改为能力识别，并适配双语清空确认与新版压缩锚点。旧发送前快照预算退役：上游并发快照与写操作门禁已替代阻塞发送路径，禁止超时取消回滚点。"
+}

@@ -1,0 +1,19 @@
+{
+	"piVersion": "1.3.0",
+	"piWebUiVersion": "0.107.0",
+	"patches": [
+		"patches/patch-pi-web-ui-topbar-menu-buttons.js",
+		"patches/patch-pi-web-ui-plugin-topbar-cache.js",
+		"patches/patch-pi-web-ui-plan-board-clear.js",
+		"patches/patch-pi-web-ui-plan-marker.js",
+		"patches/patch-pi-invalid-toolcall-names.js",
+		"patches/patch-pi-web-ui-sw-entry-revalidate.js",
+		"patches/patch-pi-web-ui-free-models-only.js",
+		"patches/patch-pi-web-ui-free-model-badge.js",
+		"patches/patch-pi-web-ui-prompt-snapshot-budget.js",
+		"patches/patch-pi-web-ui-session-ready-send.js",
+		"patches/patch-pi-web-ui-page-call-browser-sinks.js",
+		"patches/patch-pi-web-ui-goalbar-hit-area.js"
+	],
+	"notes": "pi 1.3.0 + pi-web-ui 0.107.0。本版上游已内置并注册 planMarker，但不导出；本地补丁改为按运行能力判断，并适配移除 TODO_NAMESPACE 后的快照恢复与新版 bundle 清空按钮锚点。"
+}

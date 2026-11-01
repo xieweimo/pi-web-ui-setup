@@ -11,10 +11,11 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const { locateWebUiFile } = require("../scripts/pi-web-ui-locate.js");
+const { locateWebUiFile, packageVersion } = require("../scripts/pi-web-ui-locate.js");
 
 const marker = "plan-inline-marker-v4";
 const snapshotMarker = "plan-marker-snapshot-v2";
+const stateSnapshotMarker = "plan-marker-state-load-v3";
 const strictSyntaxMarker = "plan-marker-strict-syntax-v3";
 const server = locateWebUiFile("dist", "server");
 if (!server || !fs.existsSync(server)) {
@@ -155,12 +156,14 @@ try {
 			"export { todoMarker, notifyMarker, renameMarker, actionMarker, suggestMarker };",
 		];
 		const exportNeedle = exportNeedles.find((needle) => indexText.split(needle).length - 1 === 1);
-		if (!exportNeedle) throw new Error("marker export 锚点命中 0 次");
-		replaceOne(indexFile, exportNeedle, exportNeedle.replace(" };", ", planMarker };"), "marker export");
+		// 0.107.0 起上游已原生 import + register planMarker，但不再从 index.js
+		// 对外导出它。运行时只依赖注册表，export 不是能力要求，不应因此拒绝启动。
+		if (exportNeedle) replaceOne(indexFile, exportNeedle, exportNeedle.replace(" };", ", planMarker };"), "marker export");
+		else if (!indexText.includes("registerMarker(planMarker);")) throw new Error("plan marker 既未导出也未注册");
 	}
 	replaceOne(serviceFile, "const ctx = {\n                conversationId,\n                notify: (msg, level, msgEn) => {", "const ctx = {\n                conversationId,\n                host: this.host,\n                notify: (msg, level, msgEn) => {", "marker context");
 	const serviceText = fs.readFileSync(serviceFile, "utf8");
-	if (!serviceText.includes(snapshotMarker)) {
+	if (!serviceText.includes(stateSnapshotMarker)) {
 		const legacyGetOrInit = `        const getOrInit = (ns) => {
             let st = states.get(ns);
             if (st !== undefined)
@@ -190,9 +193,37 @@ try {
 			states.set(canonicalNs, st);
 			return st;
 		};`.replace(/\t/g, "    ");
-		const needle = [legacyGetOrInit, modernGetOrInit].find((n) => serviceText.split(n).length - 1 === 1);
-		if (!needle) throw new Error("marker snapshot load 锚点命中 0 次");
-		const replacement = `        const getOrInit = (ns) => {
+		const upstream107GetOrInit = `        const getOrInit = (ns) => {
+            const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
+            let st = states.get(canonicalNs);
+            if (st !== undefined)
+                return st;
+            if (canonicalNs === ACTION_NAMESPACE)
+                st = this.getState(conversationId, canonicalNs, initActionState);
+            else {
+                const marker = getMarker(canonicalNs);
+                st = marker?.init ? marker.init() : {};
+            }
+            states.set(canonicalNs, st);
+            return st;
+        };`;
+		// 0.114.3 已把普通 marker 的快照读取原生合入；仍把它归一到本地带版本
+		// 标记的实现，避免启动门禁把“上游已实现”误报成锚点失效。
+		const upstream114GetOrInit = `        const getOrInit = (ns) => {
+            const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
+            let st = states.get(canonicalNs);
+            if (st !== undefined)
+                return st;
+            if (canonicalNs === ACTION_NAMESPACE)
+                st = this.getState(conversationId, canonicalNs, initActionState);
+            else {
+                const marker = getMarker(canonicalNs);
+                st = this.getState(conversationId, canonicalNs, () => (marker?.init ? marker.init() : {}));
+            }
+            states.set(canonicalNs, st);
+            return st;
+        };`;
+		const patchedV2GetOrInit = `        const getOrInit = (ns) => {
             const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
             let st = states.get(canonicalNs);
             if (st !== undefined)
@@ -200,6 +231,19 @@ try {
             // ${snapshotMarker}：先读会话快照（服务重启后靠它回填），再回落 marker.init()。
             const marker = getMarker(canonicalNs);
             st = this.getState(conversationId, canonicalNs, () => (canonicalNs === TODO_NAMESPACE ? initTodoState() : canonicalNs === ACTION_NAMESPACE ? initActionState() : marker?.init ? marker.init() : {}));
+            states.set(canonicalNs, st);
+            return st;
+        };`;
+		const needle = [legacyGetOrInit, modernGetOrInit, upstream107GetOrInit, upstream114GetOrInit, patchedV2GetOrInit].find((n) => serviceText.split(n).length - 1 === 1);
+		if (!needle) throw new Error("marker snapshot load 锚点命中 0 次");
+		const replacement = `        const getOrInit = (ns) => {
+            const canonicalNs = ns === "suggest" ? ACTION_NAMESPACE : ns;
+            let st = states.get(canonicalNs);
+            if (st !== undefined)
+                return st;
+            // ${stateSnapshotMarker}：先读会话快照（服务重启后靠它回填），再回落 marker.init()。
+            const marker = getMarker(canonicalNs);
+            st = this.getState(conversationId, canonicalNs, () => (typeof TODO_NAMESPACE !== "undefined" && canonicalNs === TODO_NAMESPACE ? initTodoState() : canonicalNs === ACTION_NAMESPACE ? initActionState() : marker?.init ? marker.init() : {}));
             states.set(canonicalNs, st);
             return st;
         };`;
@@ -245,9 +289,18 @@ try {
 	let patchedNext = web;
 	if (!web.match(dupRe)) {
 		const count = web.split(webNeedle).length - 1;
-		if (count !== 1) throw new Error(`markerGroupPlan 锚点命中 ${count} 次`);
-		patchedNext = web.replace(webNeedle, webNeedle + webUnit);
-		console.log("✓ 已安装 [[plan:...]] 自动任务看板标记");
+		const [webMajor, webMinor] = (packageVersion("pi-web-ui") || "0.0").split(".").map(Number);
+		if (count === 1) {
+			patchedNext = web.replace(webNeedle, webNeedle + webUnit);
+			console.log("✓ 已安装 [[plan:...]] 自动任务看板标记");
+		}
+		else if (webMajor > 0 || webMinor >= 114) {
+			// 0.114 起前端 i18n 已拆成独立语言 chunk，旧入口里的 markerGroupRename
+			// 文案锚点不再存在。plan marker 的真实能力由服务端注册和行为测试保证，
+			// 不应为一条仅用于显示名称的旧翻译注入拒绝启动。
+			console.log("✓ 新版前端已拆分 marker 文案，跳过旧入口翻译注入");
+		}
+		else throw new Error(`markerGroupPlan 锚点命中 ${count} 次`);
 	}
 	else {
 		const copies = (web.match(new RegExp(escRe(webUnit), "g")) || []).length;

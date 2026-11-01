@@ -11,7 +11,20 @@ $watchdogPort = 8790                                      # 独立守护端口�
 $idleLimit = 3                                            # 页面断开多少秒后停服（只需容忍刷新页面的重连空档）
 $idleFallback = 300                                       # 页面一次都没连上时的兜底秒数（浏览器起不来，别让服务长挂）
 $keepAliveWhileRunning = $true                            # 页面断开时若服务端还有任务在跑，先等它跑完再停服
-$waitReady = 20                                           # 等待端口就绪的最长秒数
+$waitReady = 60                                           # 与 watchdog 的启动超时保持一致
+
+# 每次启动使用独立状态文件；进度窗口随启动器退出自动关闭。
+$progressDir = Join-Path $cwd 'work\pi-web-ui-prod'
+New-Item -ItemType Directory -Force -Path $progressDir | Out-Null
+$progressFile = Join-Path $progressDir ("startup-progress-$PID.txt")
+function Set-StartupProgress([string]$Message) {
+    try { [System.IO.File]::WriteAllText($progressFile, $Message, [System.Text.Encoding]::UTF8) } catch { }
+}
+Set-StartupProgress '正在检查启动环境，请稍候…'
+$progressScript = Join-Path $PSScriptRoot 'pi-web-ui-start-progress.ps1'
+if (Test-Path $progressScript) {
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $progressScript + '"'), '-StatusFile', ('"' + $progressFile + '"'), '-ParentId', $PID) -WindowStyle Hidden
+}
 
 # 便携安装（学校机房等无管理员环境）会在仓库根写 install.json，记录便携 Node 与
 # pi-web-ui 启动命令的真实路径；便携 Node 不在系统 PATH，必须先注入再启动服务。
@@ -44,6 +57,7 @@ function Test-WebBusy {
 
 # 0. 检查启动命令是否存在
 if (-not (Test-Path $shim)) {
+    Set-StartupProgress '__DONE__'
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show("找不到 pi-web-ui 启动命令：`n$shim`n请先运行安装器（install.ps1）或执行 npm install -g pi-web-ui。", 'pi-web-ui')
     exit 1
@@ -122,6 +136,7 @@ $invalidToolNamePatch = Join-Path $cwd 'patches\patch-pi-invalid-toolcall-names.
 $planMarkerPatch = Join-Path $cwd 'patches\patch-pi-web-ui-plan-marker.js'
 # usageCost / hideForked / managedRecentProjects 三项已退役（上游 0.94.x 自己内建）：
 # 脚本内自带探测，遇到上游实现即打印“已退役”并退出 0，保留调用是为了兼容旧版本包。
+Set-StartupProgress '正在检查并应用补丁，请稍候…'
 $failedPatches = @()
 foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $managedRecentProjectsPatch, $topbarMenuButtonsPatch, $pluginTopbarCachePatch, $planBoardClearPatch, $goalbarHitAreaPatch, $planMarkerPatch, $danglingToolCallsPatch, $swEntryRevalidatePatch, $perClientConversationPatch, $invalidToolNamePatch, $freeModelsOnlyPatch, $freeModelBadgePatch, $goalReviewPatch, $promptSnapshotBudgetPatch, $sessionReadySendPatch, $pageCallBrowserSinksPatch)) {
     if ((Test-Path $patch) -and (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -132,19 +147,25 @@ foreach ($patch in @($usageCostPatch, $liveModelPatch, $hideForkedPatch, $manage
     }
 }
 if ($failedPatches.Count -gt 0) {
+    ('补丁执行失败：' + ($failedPatches -join '、')) | Out-File -FilePath (Join-Path $progressDir 'patch-errors.log') -Encoding utf8
     Write-Warning ('补丁执行失败（非零退出码），未改动本机代码：' + ($failedPatches -join '、'))
     Write-Warning '请先运行 node scripts\check-pi-web-ui-patches.js 定位；pi 升级后必须重新适配补丁。'
 }
 # 看板不是普通装饰补丁：必须补齐、校验并跑行为测试。失败时拒绝启动，避免
 # 「标题里写了 =done、右侧仍是待执行」这类静默脏状态。
+Set-StartupProgress '正在执行任务看板自检，请稍候…'
 if ((Test-Path $planBoardManager) -and (Get-Command node -ErrorAction SilentlyContinue)) {
-    & node $planBoardManager | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $boardOutput = & node $planBoardManager 2>&1
+    $boardExit = $LASTEXITCODE
+    $boardOutput | Out-File -FilePath (Join-Path $progressDir 'plan-board-check.log') -Encoding utf8
+    if ($boardExit -ne 0) {
+        Set-StartupProgress '__DONE__'
         Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show('任务看板自检失败，已拒绝启动。请运行 node scripts\manage-plan-board.mjs 查看诊断。', 'pi-web-ui')
-        exit $LASTEXITCODE
+        [System.Windows.Forms.MessageBox]::Show("任务看板自检失败（退出码 $boardExit），已停止启动。`n诊断日志：$progressDir\plan-board-check.log", 'pi-web-ui') | Out-Null
+        exit $boardExit
     }
 }
+Set-StartupProgress '正在准备插件与服务，请稍候…'
 if ((Test-Path $quickPhraseQueueCleanup) -and (Get-Command node -ErrorAction SilentlyContinue)) {
     & node $quickPhraseQueueCleanup --remove | Out-Null
 }
@@ -219,12 +240,14 @@ if ($nodeExe -and (Test-Path $webEntry)) {
     }
 }
 
+Set-StartupProgress '正在启动网页服务，首次启动可能需要一分钟…'
 # 1. 仅在服务未运行时启动（避免重复实例）。通过 watchdog 启动后会记录根 PID，
 # 后续重启可终止 npm/concurrently/node --watch 在内的整棵进程树。
 if (-not (Test-Listening)) {
     try {
         Invoke-RestMethod -Uri "http://127.0.0.1:$watchdogPort/start" -Method Post -TimeoutSec 3 -ErrorAction Stop | Out-Null
     } catch {
+        Set-StartupProgress '__DONE__'
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show('重启守护未能启动服务，请检查 restart descriptor。', 'pi-web-ui')
         exit 1
@@ -236,6 +259,7 @@ if (-not (Test-Listening)) {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) {
+        Set-StartupProgress '__DONE__'
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show('pi-web-ui 启动失败，请重试。', 'pi-web-ui')
         exit 1
@@ -245,6 +269,7 @@ if (-not (Test-Listening)) {
     Write-LauncherLog '服务已在运行 → 不重复启动'
 }
 
+Set-StartupProgress '正在打开浏览器…'
 # 2. 双击入口的明确语义是打开网页。TCP Established 可能是插件、健康检查或
 #    其他客户端连接，不能证明用户浏览器已有标签；不能拿它来跳过打开动作。
 try {
@@ -255,7 +280,9 @@ try {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show("服务已启动，但无法自动打开浏览器。请访问 http://localhost:$port`n$($_.Exception.Message)", 'pi-web-ui') | Out-Null
 }
+Set-StartupProgress '__DONE__'
 Start-Sleep -Seconds 5
+Remove-Item -LiteralPath $progressFile -Force -ErrorAction SilentlyContinue
 
 # 3. 监听连接：页面一关就停服。
 #    - 断开满 $idleLimit 秒 → 停服（几秒内，叉掉即关）；

@@ -39,18 +39,22 @@ if (source.includes(marker)) {
 }
 
 // 模型行徽标容器的开头（bundle 里 `dd-model-badges` 只出现一次）。
-const anchor = "(t.reasoning||t.vision)&&(0,X.jsxs)(`span`,{className:`dd-model-badges`,children:[";
-const patched =
-	"(t.reasoning||t.vision||t.free)&&(0,X.jsxs)(`span`,{className:`dd-model-badges`,children:[" +
-	`/* ${marker} */` +
-	"t.free&&(0,X.jsx)(`span`,{className:`dd-model-badge`,style:{background:`rgba(34,197,94,.16)`,color:`#4ade80`,borderColor:`rgba(34,197,94,.45)`},children:`免费`}),";
-
-const hits = source.split(anchor).length - 1;
-if (hits !== 1) {
-	console.error(`✗ 徽标锚点命中 ${hits} 次（期望 1 次），拒绝模糊替换`);
+// 0.114.x 的 JSX runtime 变量由 `X` 压缩为 `$`，并在条件里新增了 enabled 作用域徽标。
+// 注意：括号必须用 \( \) 显式匹配（正则中未转义的括号是分组语法，不参与匹配），
+// 否则替换串会多出一层括号，注入后 bundle 语法损坏。
+const anchorRe =
+	/\(t\.reasoning\|\|t\.vision\|\|D&&t\.enabled===!1\)&&\(0,(\$|X)\.jsxs\)\(`span`,\{className:`dd-model-badges`,children:\[/;
+const matched = source.match(anchorRe);
+if (!matched) {
+	console.error(`✗ 徽标锚点未命中（0.114.x 结构已变化），拒绝模糊替换`);
 	process.exit(2);
 }
+const runtime = matched[1];
+const patched =
+	`(t.reasoning||t.vision||t.free||D&&t.enabled===!1)&&(0,${runtime}.jsxs)(\`span\`,{className:\`dd-model-badges\`,children:[` +
+	`/* ${marker} */` +
+	`t.free&&(0,${runtime}.jsx)(\`span\`,{className:\`dd-model-badge\`,style:{background:\`rgba(34,197,94,.16)\`,color:\`#4ade80\`,borderColor:\`rgba(34,197,94,.45)\`},children:\`免费\`}),`;
 
-source = source.replace(anchor, patched);
+source = source.replace(anchorRe, () => patched);
 fs.writeFileSync(target, source);
 console.log(`✓ 已为 ${path.basename(target)} 注入「免费」徽标（${marker}）`);

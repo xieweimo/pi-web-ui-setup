@@ -280,6 +280,11 @@ for (const rel of profile.patches) {
 // 创建 MarkerService 时也必须传入同一个 PlanManager，否则界面会提示服务不可用。
 const agentServiceFile = path.join(webRoot, "dist", "server", "agent-service.js");
 const agentServiceText = fs.existsSync(agentServiceFile) ? fs.readFileSync(agentServiceFile, "utf8") : "";
+if (profile.piWebUiVersion === '0.114.3') {
+	const nativeSnapshot = ['startWorkspaceSnapshot(conv) {', 'const snapshotPromise = createWorkspaceSnapshot(conv.cwd).catch(', 'await conv.pendingWorkspaceSnapshot;', 'withWorkspaceSnapshotGate'].every(x => agentServiceText.includes(x));
+	if (nativeSnapshot) pass('native snapshot', '并发快照与写操作门禁存在，旧限时补丁已退役');
+	else fail('native snapshot', '新版并发快照保护结构缺失，不能跳过旧补丁');
+}
 if (/this\.markerSvc = new MarkerService\(\{[\s\S]*?planManager: this\.planManager,[\s\S]*?flushSnapshot: \(\) => this\.flushSnapshot\(\),/.test(agentServiceText)) {
 	pass("plan marker host", "AgentService 已注入 planManager");
 } else {

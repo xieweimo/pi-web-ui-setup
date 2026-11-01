@@ -23,7 +23,7 @@ function onceVariant(source, variants, label) {
 function patchBundle(source) {
 	const edits = [
 		["status:t.status,ready:t.status===`open`&&e.ready,terminals:", "status:t.status,ready:t.status===`open`&&e.ready,sessionReady:t.status===`open`&&e.sessionReady,terminals:"],
-		["{...e,ready:!0,state:i,approval:", "{...e,ready:!0,sessionReady:!0,state:i,approval:"],
+		[source.includes('{...e,ready:!0,state:s,optimisticQueue:o.tracker,approval:') ? '{...e,ready:!0,state:s,optimisticQueue:o.tracker,approval:' : '{...e,ready:!0,state:i,approval:', source.includes('{...e,ready:!0,state:s,optimisticQueue:o.tracker,approval:') ? '{...e,ready:!0,sessionReady:!0,state:s,optimisticQueue:o.tracker,approval:' : '{...e,ready:!0,sessionReady:!0,state:i,approval:'],
 		["status:`connecting`,ready:!1,state:null,hostMetrics:", "status:`connecting`,ready:!1,sessionReady:!1,state:null,hostMetrics:"],
 		["},[e.ready,e.status,e.state?.cwd,e.state?.workspaceRoots", "},[e.ready,e.sessionReady,e.status,e.state?.cwd,e.state?.workspaceRoots"],
 	];
@@ -32,18 +32,22 @@ function patchBundle(source) {
 		["return r&&r!==n&&(i=xc(r)),{...e,ready:!0,state:t.state,sessions:i,", "return r&&r!==n&&(i=xc(r)),{...e,ready:!0,sessionReady:!0,state:t.state,sessions:i,"],
 		["return r&&r!==n&&(i=Uc(r)),{...e,ready:!0,state:t.state,sessions:i,", "return r&&r!==n&&(i=Uc(r)),{...e,ready:!0,sessionReady:!0,state:t.state,sessions:i,"],
 		[",{...e,ready:!0,state:t.state,transition:s,sessions:a,", ",{...e,ready:!0,sessionReady:!0,state:t.state,transition:s,sessions:a,"],
+			['return{...e,ready:!0,state:l.state,optimisticQueue:l.tracker,transition:s,sessions:a,', 'return{...e,ready:!0,sessionReady:!0,state:l.state,optimisticQueue:l.tracker,transition:s,sessions:a,'],
 	], "bundle snapshot");
 	source = onceVariant(source, [
 		["da({ready:e.ready,status:e.status,cwd:", "da({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
 		["pa({ready:e.ready,status:e.status,cwd:", "pa({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
 		["Ya({ready:e.ready,status:e.status,cwd:", "Ya({ready:e.ready&&e.sessionReady,status:e.status,cwd:"],
+			['nn({ready:e.ready,status:e.status,cwd:', 'nn({ready:e.ready&&e.sessionReady,status:e.status,cwd:'],
 	], "bundle ready consumer");
 	return once(source, "sessionReady:t.status===`open`&&e.sessionReady,terminals:", `sessionReady:t.status===\`open\`&&e.sessionReady,/*${marker}*/terminals:` , "bundle 标记");
 }
 function patchBundleTransition(source) {
-	source = once(source, "case`host_metrics`:return{...e,hostMetrics:t.metrics};", `case\`session_initializing\`:return{...e,sessionReady:!1};/*${transitionMarker}*/case\`host_metrics\`:return{...e,hostMetrics:t.metrics};`, "bundle 新会话门禁");
+	const hostAnchor = source.includes('case`host_metrics`:return{...e,...t.metrics===void 0?{}:{hostMetrics:t.metrics},...t.latencyMs===void 0?{}:{latencyMs:t.latencyMs}};') ? 'case`host_metrics`:return{...e,...t.metrics===void 0?{}:{hostMetrics:t.metrics},...t.latencyMs===void 0?{}:{latencyMs:t.latencyMs}};' : 'case`host_metrics`:return{...e,hostMetrics:t.metrics};';
+	source = once(source, hostAnchor, `case\`session_initializing\`:return{...e,sessionReady:!1};/*${transitionMarker}*/${hostAnchor}`,  "bundle 新会话门禁");
 	return onceVariant(source, [
 		["r.send(JSON.stringify(e)),e.type===`question_answer`", "e.type===`new_chat`&&t({type:`session_initializing`}),r.send(JSON.stringify(e)),e.type===`question_answer`"],
+		['r.send(JSON.stringify(e)),e.type===`prompt`', 'e.type===`new_chat`&&t({type:`session_initializing`}),r.send(JSON.stringify(e)),e.type===`prompt`'],
 		["i.send(JSON.stringify(e)),e.type===`question_answer`", "e.type===`new_chat`&&t({type:`session_initializing`}),i.send(JSON.stringify(e)),e.type===`question_answer`"],
 	], "bundle 发送拦截");
 }

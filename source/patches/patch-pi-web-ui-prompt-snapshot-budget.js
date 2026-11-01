@@ -28,6 +28,12 @@ for (const name of files) {
 	}
 	originals.set(name, fs.readFileSync(file, "utf8"));
 }
+// 新版以并发快照 + 写操作门禁取代发送前同步等待；不能再取消快照破坏回滚点。
+const nativeAgent = originals.get('agent-service.js');
+if (nativeAgent.includes('startWorkspaceSnapshot(conv) {') && nativeAgent.includes('const snapshotPromise = createWorkspaceSnapshot(conv.cwd).catch(') && nativeAgent.includes('await conv.pendingWorkspaceSnapshot;') && nativeAgent.includes('withWorkspaceSnapshotGate')) {
+	console.log('✓ 发送前快照预算已退役：上游并发创建快照，并在写操作前等待回滚点');
+	process.exit(0);
+}
 const marked = files.filter((name) => originals.get(name).includes(marker));
 if (marked.length === files.length) {
 	const file = path.join(server, "workspace-snapshot.js");

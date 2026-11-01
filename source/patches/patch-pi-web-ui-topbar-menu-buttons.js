@@ -90,6 +90,20 @@ const replacement =
 const pinnedRe = /([A-Za-z_$][\w$]*)=new Set\(\[`host:settings`([^\]]*)\]\)/g;
 const pinnedHits = [...source.matchAll(pinnedRe)];
 const count = source.split(needle).length - 1;
+// 0.114.3 不再注册 host:sound，且插入 zen-mode/device-center；仅改仍存在的五项。
+const currentIds = ['browser', 'language', 'theme', 'update', 'github'];
+const currentEntries = currentIds.map((id) => {
+	const re = new RegExp('\\{id:`host:' + id + '`,slot:`topbar.primary`,[^{}]+\\}', 'g');
+	const hits = [...source.matchAll(re)];
+	return hits.length === 1 && hits[0][0].includes('hidden:!0') ? hits[0][0] : null;
+});
+if (count === 0 && pinnedHits.length === 1 && !source.includes('id:`host:sound`') && currentEntries.every(Boolean)) {
+	for (const entry of currentEntries) source = source.replace(entry, entry.replace(/,hidden:!0/g, ''));
+	source = source.replace(pinnedRe, (_m, name, rest) => `${name}=new Set([\`host:settings\`${rest},${currentIds.map(id => '\`host:' + id + '\`').join(',')}])/*${marker}*/`);
+	fs.writeFileSync(target, source, 'utf8');
+	console.log('✓ 已恢复新版仍注册的五个原生顶栏入口（上游已移除独立声音入口）');
+	process.exit(0);
+}
 if (count !== 1 || pinnedHits.length !== 1) {
 	console.error(
 		`✗ pi-web-ui 目标代码已变化，未应用原生菜单项顶栏按钮补丁（注册表命中 ${count} 次，固定项命中 ${pinnedHits.length} 次）`,

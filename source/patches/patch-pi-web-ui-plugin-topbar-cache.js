@@ -59,7 +59,12 @@ const appReplacement01000 =
 const pristineApp01044 = pristineApp01000.replace("m.useMemo", "g.useMemo").replace("Ni(Si(", "ha(ia(");
 const appReplacement01044 = appReplacement01000.replace("m.useMemo", "g.useMemo").replace("Ni(Si(", "ha(ia(");
 // 变体表：按版本向后兼容，命中哪个用哪个；全部命不上就退出码 2（不做模糊替换）。
+// 0.114.3：诊断日志移到 effect，useMemo 返回 [布局, 诊断]；保留该纯渲染结构。
+const pristineApp01143 = '[M,N]=(0,Q.useMemo)(()=>{let r=[];return[xi(ui(n.plugins),{locale:t,t:t=>e(t),disabledPlugins:n.settings?.disabledPlugins??[],layout:n.settings?.uiLayout,diagnostics:r}),r]},[n.plugins,n.settings?.disabledPlugins,n.settings?.uiLayout,t,e])';
+const cacheBody = appReplacement.slice(appReplacement.indexOf('let r=[],i=n.plugins;'), appReplacement.indexOf('let a=xi(ui(i)'));
+const appReplacement01143 = '[M,N]=(0,Q.useMemo)(()=>{' + cacheBody + 'return[xi(ui(i),{locale:t,t:t=>e(t),disabledPlugins:n.settings?.disabledPlugins??[],layout:n.settings?.uiLayout,diagnostics:r}),r]/*' + marker + '*/},[n.plugins,n.pluginsLoaded,n.settings?.disabledPlugins,n.settings?.uiLayout,t,e])';
 const appVariants = [
+	{ version: '0.114.3', needle: pristineApp01143, replacement: appReplacement01143 },
 	{ version: "0.95.x", needle: oldApp, replacement: appReplacement },
 	{ version: "0.96.x", needle: pristineApp, replacement: appReplacement },
 	{ version: "0.98+/0.99.x", needle: pristineApp0990, replacement: appReplacement0990 },

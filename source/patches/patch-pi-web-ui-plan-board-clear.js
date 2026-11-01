@@ -48,14 +48,17 @@ function patchBundle() {
 	} else {
 		// 锚点故意不含压缩后的变量名：0.96.1 是 `l=()=>{…}`、0.99.0 变成 `v=()=>{…}`，
 		// 绑变量名等于上游每次重压缩都要改补丁；仍要求唯一命中。
-		const needle = "window.confirm(`确定要清空当前任务计划看板吗？`)&&$({type:`plan_update`,steps:[]})";
-		const replacement = "$({type:`plan_update`,steps:[]})/*plan-board-clear-no-confirm-v1*/";
-		const count = patched.split(needle).length - 1;
-		if (count !== 1) {
+		const clearHandlers = [
+			["window.confirm(`确定要清空当前任务计划看板吗？`)&&$({type:`plan_update`,steps:[]})", "$({type:`plan_update`,steps:[]})/*plan-board-clear-no-confirm-v1*/"],
+			["window.confirm(n?`确定要清空当前任务计划看板吗？`:`Are you sure you want to clear the plan board?`)&&Z({type:`plan_update`,steps:[]})", "Z({type:`plan_update`,steps:[]})/*plan-board-clear-no-confirm-v1*/"],
+		];
+		const matchedHandler = clearHandlers.find(([candidate]) => patched.split(candidate).length - 1 === 1);
+		const count = matchedHandler ? 1 : 0;
+		if (!matchedHandler) {
 			note(2, `✗ 生产 bundle 看板清空锚点命中 ${count} 次，拒绝模糊替换`);
 			return;
 		}
-		patched = patched.replace(needle, replacement);
+		patched = patched.replace(matchedHandler[0], matchedHandler[1]);
 		note(0, "✓ 已移除任务看板清空的同步 confirm() 阻塞（生产 bundle）");
 	}
 	// 0.104.4 把清空按钮放在 n&&（仅展开）区域，默认折叠时根本无法关闭。
@@ -64,10 +67,21 @@ function patchBundle() {
 	const [major, minor] = (packageVersion("pi-web-ui") || "0.0").split(".").map(Number);
 	if (major >= 1 || minor >= 104) {
 		if (!patched.includes(visibleMarker)) {
-			const clearButton = ',(0,X.jsx)(`button`,{type:`button`,className:`plan-board-iconbtn`,title:t(`clear`),onClick:e=>{e.stopPropagation(),v()},children:(0,X.jsx)(z,{})})';
-			const insertBefore = 'n&&(0,X.jsx)(`button`,{type:`button`,className:`plan-board-clean-handoff`';
-			const clearCount = patched.split(clearButton).length - 1;
-			const insertCount = patched.split(insertBefore).length - 1;
+			// 压缩变量名会随构建变化（0.104.4: z，0.107.0: R），列出经过
+			// 人工核验的完整唯一锚点，不使用跨组件的宽泛正则。
+			const clearButtons = [
+				',(0,X.jsx)(`button`,{type:`button`,className:`plan-board-iconbtn`,title:t(`clear`),onClick:e=>{e.stopPropagation(),v()},children:(0,X.jsx)(z,{})})',
+				',(0,X.jsx)(`button`,{type:`button`,className:`plan-board-iconbtn`,title:t(`clear`),onClick:e=>{e.stopPropagation(),v()},children:(0,X.jsx)(R,{})})',
+				',(0,$.jsx)(`button`,{type:`button`,className:`plan-board-iconbtn`,title:t(`clear`),onClick:e=>{e.stopPropagation(),x()},children:(0,$.jsx)(g,{})})',
+			];
+			const clearButton = clearButtons.find((candidate) => patched.split(candidate).length - 1 === 1);
+			const insertBefores = [
+				'n&&(0,X.jsx)(`button`,{type:`button`,className:`plan-board-clean-handoff`',
+				'r&&(0,$.jsx)(`button`,{type:`button`,className:`plan-board-clean-handoff`',
+			];
+			const insertBefore = insertBefores.find((candidate) => patched.split(candidate).length - 1 === 1);
+			const clearCount = clearButton ? 1 : 0;
+			const insertCount = insertBefore ? 1 : 0;
 			if (clearCount !== 1 || insertCount !== 1) {
 				note(2, `✗ 生产 bundle 常驻清空按钮锚点命中 ${clearCount}/${insertCount} 次，拒绝模糊替换`);
 				return;
